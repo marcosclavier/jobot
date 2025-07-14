@@ -28,6 +28,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from google.api_core import exceptions as google_exceptions
 
+import re  # Add this to your imports if not already present (it's standard library)
+
+from docx.shared import Pt, Inches
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -221,7 +226,7 @@ def enhance_profile_with_gemini(resume_text):
         Example JSON output:
         {{
           "name": "John Doe",
-          "contact_info": {{"phone": "123-456-7890", "email": "john@example.com", "linkedin": "linkedin.com/in/johndoe"}},
+          "contact_info": {"phone": "123-456-7890", "email": "john@example.com", "linkedin": "linkedin.com/in/johndoe"},
           "enhanced_skills": ["Python", "Data Analysis", "Machine Learning", "SQL"],
           "experience_summary": "A data scientist with 5 years of experience...",
           "suggested_keywords": ["Data Scientist", "Python Developer", "AI Engineer"],
@@ -292,9 +297,9 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
                 "**Custom Instructions:**\n"
                 f"{custom_prompt if custom_prompt else 'No custom instructions provided.'}\n\n"
                 "**Tasks:**\n"
-                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant\'s most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately.\n"
-                "2.  **Resume Adjustments:** Provide a list of specific, actionable suggestions for optimizing the applicant\'s resume for this job. Focus on incorporating keywords from the job description and aligning the experience summary with the role\'s requirements. Incorporate any custom instructions.\n"
-                "3.  **Answer Questions:** If there are questions below, provide thoughtful and detailed answers based on the applicant\'s profile.\n\n"
+                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant's most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately.\n"
+                "2.  **Resume Adjustments:** Provide a list of specific, actionable suggestions for optimizing the applicant's resume for this job. Focus on incorporating keywords from the job description and aligning the experience summary with the role's requirements. Incorporate any custom instructions.\n"
+                "3.  **Answer Questions:** If there are questions below, provide thoughtful and detailed answers based on the applicant's profile.\n\n"
                 "**Application Questions:**\n"
                 f"{json.dumps(questions) if questions else 'No specific questions found.'}\n\n"
                 "**Output Format:**\n"
@@ -393,7 +398,7 @@ def validate_materials_with_gemini(materials):
         ---
 
         Return a JSON object with a single key "validation_feedback", which is a list of strings.
-        Example: {{"validation_feedback": ["The cover letter could be more specific about project X.", "Consider rephrasing the second resume suggestion for more impact."]}}
+        Example: {"validation_feedback": ["The cover letter could be more specific about project X.", "Consider rephrasing the second resume suggestion for more impact."]}
         """
         response = model.generate_content(prompt)
         cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
@@ -674,7 +679,7 @@ def evaluate_job_fit(job, user_profile):
         3. Write a concise one-paragraph summary of the job role and its key responsibilities.
 
         Return a JSON object with the keys: "fit_score", "explanation", and "summary".
-        Example: {{"fit_score": 8, "explanation": "The role aligns well...", "summary": "This is a software engineering role..."}}
+        Example: {"fit_score": 8, "explanation": "The role aligns well...", "summary": "This is a software engineering role..."}
         """
         response = model.generate_content(prompt)
         cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
@@ -752,7 +757,7 @@ def search():
 
                 fit_score = evaluation.get('fit_score', 0)
                 logging.info(f"  - Fit Score: {fit_score}/10")
-                logging.info(f"  - Skill Match: {evaluation.get('skill_match_percentage')}%")
+                logging.info(f"  - Skill Match: {evaluation.get('skill_match_percentage')}% ")
 
                 if fit_score >= 7:
                     logging.info(f"  - Recommendation: Saving job - {title}")
@@ -785,7 +790,7 @@ def review():
         click.echo("\n" + "-"*80)
         click.echo(f"Title: {job_details.get('title')}")
         click.echo(f"Company: {job_details.get('company', {}).get('display_name')}")
-        click.echo(f"Fit Score: {evaluation.get('fit_score')}/10 | Skill Match: {evaluation.get('skill_match_percentage')}%")
+        click.echo(f"Fit Score: {evaluation.get('fit_score')}/10 | Skill Match: {evaluation.get('skill_match_percentage')}% ")
         click.echo(f"Summary: {evaluation.get('summary')}")
         click.echo("-"*80)
 
@@ -885,6 +890,60 @@ def refine():
     else:
         click.echo("No materials were approved in this session.")
 
+
+def add_styled_text(paragraph, text):
+    """Parses text for **bold** and *italic*, adding styled runs."""
+    # Split on Markdown markers without capturing them in groups
+    parts = re.split(r'(\**.*?\**|\*.*?\*)', text)
+    for part in parts:
+        if part.startswith('**') and part.endswith('**'):
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
+        elif part.startswith('*') and part.endswith('*'):
+            run = paragraph.add_run(part[1:-1])
+            run.italic = True
+        else:
+            paragraph.add_run(part)
+
+def add_formatted_content(doc, content, is_resume=False):
+    """Adds content to DOCX with native formatting, parsing Markdown and structure."""
+    lines = content.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue  # Skip empty lines
+        if line.startswith('# '):
+            heading = doc.add_heading(line[2:], level=1)
+            heading.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT if is_resume else WD_PARAGRAPH_ALIGNMENT.CENTER
+        elif line.startswith('## '):
+            heading = doc.add_heading(line[3:], level=2)
+        elif line.startswith('### '):
+            heading = doc.add_heading(line[4:], level=3)
+        elif line.startswith('- ') or line.startswith('* '):
+            p = doc.add_paragraph(style='List Bullet')
+            add_styled_text(p, line[2:])
+        elif is_resume and ':' in line:  # Common in resumes, e.g., "Skills: Python, SQL"
+            p = doc.add_paragraph()
+            parts = line.split(':', 1)
+            run = p.add_run(parts[0] + ': ')
+            run.bold = True
+            add_styled_text(p, parts[1].strip())
+        else:
+            p = doc.add_paragraph()
+            add_styled_text(p, line)
+
+def set_document_styles(doc):
+    """Sets professional document-wide styles."""
+    normal_style = doc.styles['Normal']
+    normal_style.font.name = 'Calibri'  # Or 'Arial'
+    normal_style.font.size = Pt(11)
+    
+    section = doc.sections[0]
+    section.top_margin = Inches(0.5)
+    section.bottom_margin = Inches(0.5)
+    section.left_margin = Inches(0.75)
+    section.right_margin = Inches(0.75)
+
 @cli.command()
 def export_docs():
     """Exports approved and edited materials to DOCX and JSON files."""
@@ -910,30 +969,48 @@ def export_docs():
         header_text += f"{contact_info['email']} | "
     if contact_info.get('linkedin'):
         header_text += f"{contact_info['linkedin']} | "
-    header_text += f"{location}"
+    header_text = header_text.rstrip(' | ') + f"\n{location}"
 
     for item in approved_materials:
         job_details = item.get('job_details', {})
         materials = item.get('generated_materials', {})
-        company = job_details.get('company', {}).get('display_name', 'N/A').replace(' ', '_').replace('/', '_')
-        title = job_details.get('title', 'N/A').replace(' ', '_').replace('/', '_')
+        company = job_details.get('company', {}).get('display_name', 'N_A').replace(' ', '_').replace('/', '_')
+        title = job_details.get('title', 'N_A').replace(' ', '_').replace('/', '_')
 
         # --- Export Cover Letter ---
         cover_letter_doc = docx.Document()
-        cover_letter_doc.add_paragraph(header_text)
-        cover_letter_doc.add_heading(job_details.get('title'), level=1)
+        set_document_styles(cover_letter_doc)
+        
+        # Add header (left-aligned for cover letters)
+        header_p = cover_letter_doc.add_paragraph(header_text)
+        header_p.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        
+        # Add job/company info as headings
+        cover_letter_doc.add_heading(job_details.get('title', 'N/A'), level=1)
         cover_letter_doc.add_heading(f"Company: {job_details.get('company', {}).get('display_name')}", level=2)
         
-        cover_letter_doc.add_paragraph(materials.get('cover_letter', 'Not generated.'))
+        # Add formatted cover letter body
+        cover_letter_content = materials.get('cover_letter', 'Not generated.')
+        add_formatted_content(cover_letter_doc, cover_letter_content)
+        
         cover_letter_path = os.path.join(output_dir, f"{company}_{title}_CoverLetter.docx")
         cover_letter_doc.save(cover_letter_path)
         logging.info(f"Exported cover letter to {cover_letter_path}")
 
         # --- Export Refined Resume ---
         resume_doc = docx.Document()
-        resume_doc.add_paragraph(header_text)
+        set_document_styles(resume_doc)
         
-        resume_doc.add_paragraph(materials.get('refined_resume', 'Not generated.'))
+        # Add header (center-aligned for resumes)
+        header_p = resume_doc.add_paragraph(header_text)
+        header_p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        for run in header_p.runs:
+            run.font.size = Pt(12)  # Slightly larger for header
+        
+        # Add formatted resume body (with resume-specific parsing)
+        resume_content = materials.get('refined_resume', 'Not generated.')
+        add_formatted_content(resume_doc, resume_content, is_resume=True)
+        
         resume_path = os.path.join(output_dir, f"{company}_{title}_Resume.docx")
         resume_doc.save(resume_path)
         logging.info(f"Exported refined resume to {resume_path}")
