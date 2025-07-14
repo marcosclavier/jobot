@@ -1,3 +1,12 @@
+
+"""
+Job Application Automation Bot
+
+This script automates the process of finding and applying for jobs.
+It now includes functionality to parse resumes, enhance user profiles using AI,
+and manage the bot through a CLI interface.
+"""
+
 import os
 import json
 import time
@@ -30,70 +39,649 @@ logging.basicConfig(level=logging.INFO,
 # Load environment variables from .env file
 load_dotenv()
 
-# --- Imports from new modules ---
-from .config import (
-    PROFILE_FILE, SEEN_JOBS_FILE, RECOMMENDED_JOBS_FILE, SELECTED_JOBS_FILE,
-    GENERATED_MATERIALS_FILE, EDITED_MATERIALS_FILE, PROFILE_HASH_FILE,
-    MAX_WORKERS, SCRAPE_TIMEOUT, MAX_PAGES, MAX_DAYS_OLD
-)
-from .encryption_utils import load_key, encrypt_data, decrypt_data
-from .profile_manager import load_profile, save_profile, validate_profile, has_profile_changed, update_profile_hash
-from .resume_parser import parse_resume
-from .api_clients import scrape_full_description, fetch_adzuna_jobs, fetch_indeed_jobs
-from .gemini_services import (
-    enhance_profile_with_gemini, expand_keywords_with_gemini,
-    generate_application_materials, simulate_ats_score,
-    validate_materials_with_gemini, get_gemini_suggestions,
-    apply_validation_feedback, generate_refined_resume, evaluate_job_fit
-)
-from .file_utils import load_json_file, save_json_file
+# --- Constants ---
+PROFILE_FILE = 'profile.json'
+SEEN_JOBS_FILE = 'seen_jobs.json'
+RECOMMENDED_JOBS_FILE = 'recommended_jobs.json'
+SELECTED_JOBS_FILE = 'selected_jobs.json'
+GENERATED_MATERIALS_FILE = 'generated_materials.json'
+EDITED_MATERIALS_FILE = 'edited_materials.json'
+PROFILE_HASH_FILE = '.profile_hash'
+MAX_WORKERS = 5
+SCRAPE_TIMEOUT = 30
+MAX_PAGES = 3
+MAX_DAYS_OLD = 15
+
+# --- Encryption ---
+def load_key():
+    """Loads the encryption key from .env file."""
+    key = os.getenv("ENCRYPTION_KEY")
+    if not key:
+        logging.error("ENCRYPTION_KEY not found in .env file. Generate one with `generate-key`.")
+        raise ValueError("Encryption key not found.")
+    return key.encode()
+
+def encrypt_data(data, key):
+    """Encrypts data using the provided key."""
+    f = Fernet(key)
+    return f.encrypt(data.encode())
+
+def decrypt_data(encrypted_data, key):
+    """Decrypts data using the provided key."""
+    f = Fernet(key)
+    return f.decrypt(encrypted_data).decode()
+
+# --- Profile Management ---
+def load_profile():
+    """Loads and decrypts the user profile."""
+    try:
+        with open(PROFILE_FILE, 'rb') as f:
+            encrypted_data = f.read()
+        if not encrypted_data:
+            return {}
+        key = load_key()
+        decrypted_json = decrypt_data(encrypted_data, key)
+        return json.loads(decrypted_json)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logging.error(f"Failed to load or decrypt profile: {e}", exc_info=True)
+        return {}
+
+def save_profile(profile_data):
+    """Encrypts and saves the user profile. Returns True on success, False on failure."""
+    try:
+        key = load_key()
+        profile_json = json.dumps(profile_data, indent=4)
+        encrypted_data = encrypt_data(profile_json, key)
+        with open(PROFILE_FILE, 'wb') as f:
+            f.write(encrypted_data)
+        logging.info(f"Profile successfully encrypted and saved to {PROFILE_FILE}.")
+        update_profile_hash()
+        return True
+    except (IOError, ValueError) as e:
+        logging.error(f"Error saving profile: {e}", exc_info=True)
+        return False
+
+def validate_profile(profile):
+    """Validates that the profile has essential fields."""
+    required_fields = ['skills', 'location']
+    missing_fields = [field for field in required_fields if not profile.get(field)]
+    if missing_fields:
+        logging.warning(f"Profile is incomplete. Missing fields: {', '.join(missing_fields)}.")
+        return False
+    return True
+
+# --- Change Detection ---
+def get_file_hash(file_path):
+    """Computes the SHA256 hash of a file."""
+    if not os.path.exists(file_path):
+        return None
+    hasher = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        buf = f.read()
+        hasher.update(buf)
+    return hasher.hexdigest()
+
+def has_profile_changed():
+    """Checks if profile.json has changed since the last run."""
+    current_hash = get_file_hash(PROFILE_FILE)
+    if not os.path.exists(PROFILE_HASH_FILE):
+        return True  # Hash file doesn't exist, assume change
+
+    with open(PROFILE_HASH_FILE, 'r') as f:
+        stored_hash = f.read().strip()
+    
+    return current_hash != stored_hash
+
+def update_profile_hash():
+    """Updates the stored hash of the profile."""
+    current_hash = get_file_hash(PROFILE_FILE)
+    if current_hash:
+        with open(PROFILE_HASH_FILE, 'w') as f:
+            f.write(current_hash)
+        logging.info("Updated profile hash.")
+
+# --- Resume Parsing ---
+def extract_text_from_pdf(file_path):
+    """Extracts text from a PDF file."""
+    try:
+        with open(file_path, 'rb') as f:
+            reader = PyPDF2.PdfReader(f)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+        return text
+    except Exception as e:
+        logging.error(f"Failed to extract text from PDF {file_path}: {e}", exc_info=True)
+        return None
+
+def extract_text_from_docx(file_path):
+    """Extracts text from a DOCX file."""
+    try:
+        doc = docx.Document(file_path)
+        return "\n".join([para.text for para in doc.paragraphs])
+    except Exception as e:
+        logging.error(f"Failed to extract text from DOCX {file_path}: {e}", exc_info=True)
+        return None
+
+def parse_resume(file_path):
+    """Parses a resume file (PDF or DOCX) to extract text."""
+    if not os.path.exists(file_path):
+        logging.error(f"Resume file not found at: {file_path}")
+        return None
+    
+    _, extension = os.path.splitext(file_path.lower())
+    if extension == '.pdf':
+        return extract_text_from_pdf(file_path)
+    elif extension == '.docx':
+        return extract_text_from_docx(file_path)
+    else:
+        logging.error(f"Unsupported file format: {extension}. Please use PDF or DOCX.")
+        return None
+
+# --- AI-Powered Content Generation ---
+def enhance_profile_with_gemini(resume_text):
+    """Uses Gemini to enhance the user profile based on resume text."""
+    if not resume_text:
+        logging.error("Cannot enhance profile, resume text is empty.")
+        return None
+    
+    logging.info("Calling Gemini to enhance profile...")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Analyze the following resume text and extract key information to create a professional profile.
+        Based on the skills and experience, suggest a realistic salary range.
+        Also, suggest a list of additional job search keywords (synonyms or related technologies).
+
+        Extract the applicant's name, contact information (phone, email, LinkedIn if available).
+
+        Resume Text:
+        ---
+        {resume_text}
+        ---
+
+        Return the output as a JSON object with the following keys:
+        - "name": The applicant's full name.
+        - "contact_info": A JSON object with "phone", "email", "linkedin" keys (use "" if not found).
+        - "enhanced_skills": A list of key skills and technologies found.
+        - "experience_summary": A brief summary of the professional experience.
+        - "suggested_keywords": A list of 10-15 suggested keywords for job searching.
+        - "salary_range": A suggested salary range (e.g., "$100,000 - $120,000 USD").
+
+        Example JSON output:
+        {{
+          "name": "John Doe",
+          "contact_info": {{"phone": "123-456-7890", "email": "john@example.com", "linkedin": "linkedin.com/in/johndoe"}},
+          "enhanced_skills": ["Python", "Data Analysis", "Machine Learning", "SQL"],
+          "experience_summary": "A data scientist with 5 years of experience...",
+          "suggested_keywords": ["Data Scientist", "Python Developer", "AI Engineer"],
+          "salary_range": "$110,000 - $135,000 USD"
+        }}
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        logging.info("Successfully enhanced profile with Gemini.")
+        return json.loads(cleaned_response)
+    except google_exceptions.ResourceExhausted as e:
+        logging.error(f"Gemini API quota exceeded: {e}", exc_info=True)
+        return None
+    except Exception as e:
+        logging.error(f"Error enhancing profile with Gemini: {e}", exc_info=True)
+        return None
+
+def expand_keywords_with_gemini(base_keywords):
+    """Expands a list of keywords using Gemini for better search results."""
+    logging.info("Calling Gemini to expand keywords...")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Given the following list of skills, generate a list of 20-30 related and synonymous keywords to improve job search results.
+        Return only a comma-separated list of keywords.
+
+        Skills: {', '.join(base_keywords)}
+        """
+        response = model.generate_content(prompt)
+        expanded_keywords = [k.strip() for k in response.text.split(',')]
+        logging.info("Successfully expanded keywords with Gemini.")
+        return list(set(base_keywords + expanded_keywords)) # Combine and remove duplicates
+    except google_exceptions.ResourceExhausted as e:
+        logging.error(f"Gemini API quota exceeded: {e}", exc_info=True)
+        return base_keywords
+    except Exception as e:
+        logging.error(f"Error expanding keywords with Gemini: {e}", exc_info=True)
+        return base_keywords # Fallback to original keywords
+
+def extract_questions_from_description(html_content):
+    """Extracts potential application questions from a job description."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    questions = []
+    for tag in soup.find_all(['li', 'p']):
+        if tag.get_text(strip=True).endswith('?'):
+            questions.append(tag.get_text(strip=True))
+    return questions
+
+def generate_application_materials(job_data, profile, custom_prompt=""):
+    """Generates cover letter, resume suggestions, and answers to questions for a job."""
+    job_title = job_data.get('job_details', {}).get('title', 'N/A')
+    logging.info(f"Generating materials for: {job_title}")
+
+    job_description = job_data.get('job_details', {}).get('full_description', '')
+    questions = extract_questions_from_description(job_description)
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            prompt = (
+                "**Objective:** Generate tailored application materials for a job applicant.\n\n"
+                "**Applicant Profile:**\n"
+                f"{json.dumps(profile, indent=2)}\n\n"
+                "**Job Details:**\n"
+                f"{json.dumps(job_data['job_details'], indent=2)}\n\n"
+                "**Custom Instructions:**\n"
+                f"{custom_prompt if custom_prompt else 'No custom instructions provided.'}\n\n"
+                "**Tasks:**\n"
+                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant\'s most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided.\n"
+                "2.  **Resume Adjustments:** Provide a list of specific, actionable suggestions for optimizing the applicant\'s resume for this job. Focus on incorporating keywords from the job description and aligning the experience summary with the role\'s requirements. Incorporate any custom instructions.\n"
+                "3.  **Answer Questions:** If there are questions below, provide thoughtful and detailed answers based on the applicant\'s profile.\n\n"
+                "**Application Questions:**\n"
+                f"{json.dumps(questions) if questions else 'No specific questions found.'}\n\n"
+                "**Output Format:**\n"
+                'Return a single JSON object with three keys: "cover_letter", "resume_suggestions", and "question_answers".\n'
+                '- `cover_letter`: A string containing the full text of the cover letter.\n'
+                '- `resume_suggestions`: A list of strings, where each string is a specific suggestion.\n'
+                '- `question_answers`: A list of objects, each with "question" and "answer" keys.'
+            )
+
+            response = model.generate_content(prompt)
+            # Attempt to extract JSON from potentially malformed response
+            raw_response_text = response.text.strip()
+            
+            # Try to find the JSON block, assuming it might be wrapped in markdown
+            if raw_response_text.startswith('```json'):
+                cleaned_response = raw_response_text.replace('```json', '', 1).rsplit('```', 1)[0].strip()
+            else:
+                cleaned_response = raw_response_text.strip()
+
+            generated_materials = json.loads(cleaned_response)
+            job_data['generated_materials'] = generated_materials
+
+            logging.info(f"Successfully generated materials for: {job_title}")
+            return job_data
+
+        except json.JSONDecodeError as e:
+            logging.warning(f"JSONDecodeError on attempt {attempt + 1} for {job_title}: {e}. Raw response: {raw_response_text}")
+            if attempt == max_retries - 1:
+                logging.error(f"Failed to generate materials for {job_title} after {max_retries} attempts due to JSON decoding error.")
+                return None
+        except google_exceptions.ResourceExhausted as e:
+            logging.error(f"Gemini API quota exceeded while generating materials for {job_title}: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            logging.error(f"Error generating materials for {job_title} on attempt {attempt + 1}: {e}", exc_info=True)
+            if attempt == max_retries - 1:
+                return None
+    return None
+
+# --- Material Refinement ---
+def simulate_ats_score(job_details, materials):
+    """Simulates an ATS score by matching keywords."""
+    logging.info("Simulating ATS score...")
+    job_description = job_details.get('full_description', '')
+    cover_letter = materials.get('cover_letter', '')
+    resume_text = materials.get('refined_resume', ' '.join(materials.get('resume_suggestions', [])))
+    full_text = cover_letter + ' ' + resume_text
+
+    if not job_description or not full_text:
+        return {"score": 0, "matched_keywords": [], "missing_keywords": []}
+
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        From the following job description, extract the 20 most important keywords and skills.
+        Return them as a JSON list of strings.
+
+        Job Description:
+        ---
+        {job_description[:4000]}
+        ---
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        keywords = json.loads(cleaned_response)
+
+        matched_keywords = {kw for kw in keywords if kw.lower() in full_text.lower()}
+        missing_keywords = set(keywords) - matched_keywords
+        score = (len(matched_keywords) / len(keywords) * 100) if keywords else 0
+
+        logging.info(f"ATS simulation complete. Score: {score:.2f}%")
+        return {
+            "score": round(score, 2),
+            "matched_keywords": list(matched_keywords),
+            "missing_keywords": list(missing_keywords)
+        }
+    except Exception as e:
+        logging.error(f"Error during ATS simulation: {e}", exc_info=True)
+        return {"score": 0, "matched_keywords": [], "missing_keywords": []}
+
+def validate_materials_with_gemini(materials):
+    """Uses Gemini to validate the completeness and quality of application materials."""
+    logging.info("Calling Gemini to validate materials...")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Please act as a career coach and review the following application materials.
+        Provide a list of actionable suggestions for improvement.
+        Focus on clarity, impact, and professionalism. Check for any incomplete sentences or sections.
+        If "refined_resume" is present, review that full resume text; otherwise, review "resume_suggestions".
+
+        Materials:
+        ---
+        {json.dumps(materials, indent=2)}
+        ---
+
+        Return a JSON object with a single key "validation_feedback", which is a list of strings.
+        Example: {{"validation_feedback": ["The cover letter could be more specific about project X.", "Consider rephrasing the second resume suggestion for more impact."]}}
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        validation = json.loads(cleaned_response)
+        logging.info("Successfully validated materials with Gemini.")
+        return validation.get('validation_feedback', [])
+    except Exception as e:
+        logging.error(f"Error validating materials with Gemini: {e}", exc_info=True)
+        return ["Failed to get validation from Gemini."]
+
+def get_gemini_suggestions(text_to_improve, instruction):
+    """Uses Gemini to improve a specific piece of text based on instructions."""
+    logging.info("Calling Gemini for text improvement suggestions...")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash') # Using pro for better writing
+        prompt = f"""
+        Please revise the following text based on the user's instruction.
+        Return only the revised text, without any extra formatting or explanation.
+
+        Original Text:
+        ---
+        {text_to_improve}
+        ---
+
+        Instruction: "{instruction}"
+        """
+        response = model.generate_content(prompt)
+        logging.info("Successfully received suggestion from Gemini.")
+        return response.text.strip()
+    except Exception as e:
+        logging.error(f"Error getting suggestions from Gemini: {e}", exc_info=True)
+        return "Failed to get suggestion from Gemini."
+
+def apply_validation_feedback(materials, validation_feedback):
+    """Uses Gemini to apply validation feedback to the materials."""
+    if not validation_feedback:
+        logging.info("No validation feedback to apply.")
+        return materials
+
+    logging.info("Applying validation feedback with Gemini...")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Current Materials:
+        ---
+        {json.dumps(materials, indent=2)}
+        ---
+
+        Validation Feedback:
+        ---
+        {json.dumps(validation_feedback, indent=2)}
+        ---
+
+        Revise the "cover_letter" and "refined_resume" to address all the feedback points. Make sure the revisions improve clarity, impact, professionalism, and incorporate any suggestions.
+
+        Return a JSON object with keys "cover_letter" and "refined_resume", containing the revised texts.
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        revised = json.loads(cleaned_response)
+        materials['cover_letter'] = revised.get('cover_letter', materials['cover_letter'])
+        materials['refined_resume'] = revised.get('refined_resume', materials['refined_resume'])
+        logging.info("Successfully applied feedback.")
+        return materials
+    except Exception as e:
+        logging.error(f"Error applying validation feedback: {e}", exc_info=True)
+        return materials
+
+# --- New Function for Refined Resume ---
+def generate_refined_resume(profile, materials, job_data):
+    """Uses Gemini to generate a refined resume based on profile and suggestions."""
+    suggestions = materials.get('resume_suggestions', [])
+    job_description = job_data.get('job_details', {}).get('full_description', '')
+    job_title = job_data.get('job_details', {}).get('title', 'N/A')
+    
+    logging.info(f"Generating refined resume for: {job_title}")
+    
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Applicant Profile:
+        ---
+        {json.dumps(profile, indent=2)}
+        ---
+
+        Job Description:
+        ---
+        {job_description[:4000]}
+        ---
+
+        Resume Suggestions:
+        ---
+        {json.dumps(suggestions, indent=2)}
+        ---
+
+        Task: Create a professional resume based on the applicant profile. Ensure to include the applicant's name, contact information (email, phone, and LinkedIn), and location prominently at the top. Incorporate all the provided suggestions. Tailor it specifically to the job description, highlighting relevant skills and experiences. Ensure the resume is professional, concise, and optimized for ATS systems by including keywords from the job description.
+        
+        Return only the full text of the resume, without any additional explanations or formatting.
+        """
+        response = model.generate_content(prompt)
+        refined_resume = response.text.strip()
+        logging.info(f"Successfully generated refined resume for: {job_title}")
+        return refined_resume
+    except google_exceptions.ResourceExhausted as e:
+        logging.error(f"Gemini API quota exceeded while generating refined resume for {job_title}: {e}", exc_info=True)
+        return "Failed to generate refined resume due to API quota."
+    except Exception as e:
+        logging.error(f"Error generating refined resume for {job_title}: {e}", exc_info=True)
+        return "Failed to generate refined resume."
+
+# --- Job Search & File Management ---
+def load_json_file(file_path):
+    """Loads data from a JSON file."""
+    if not os.path.exists(file_path):
+        return []
+    try:
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_json_file(data, file_path):
+    """Saves data to a JSON file."""
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+    except IOError as e:
+        logging.error(f"Error writing to {file_path}: {e}", exc_info=True)
 
 def save_recommended_job(job_data):
-    """
-    Saves a recommended job to the RECOMMENDED_JOBS_FILE.
-    Prevents duplicate jobs based on job ID.
-
-    Args:
-        job_data (dict): A dictionary containing job details and evaluation.
-                         Expected keys: 'job_details' (dict with 'id' key).
-    
-    Output:
-        None. Writes to RECOMMENDED_JOBS_FILE.
-    """
     recommendations = load_json_file(RECOMMENDED_JOBS_FILE)
-    job_id = job_data.get('job_details', {}).get('id')
-    if job_id and not any(job.get('job_details', {}).get('id') == job_id for job in recommendations):
-        recommendations.append(job_data)
-        save_json_file(recommendations, RECOMMENDED_JOBS_FILE)
-    else:
-        logging.info(f"Job with ID {job_id} already exists in recommendations or has no ID. Skipping save.")
+    recommendations.append(job_data)
+    save_json_file(recommendations, RECOMMENDED_JOBS_FILE)
 
 def save_selected_job(job_data):
-    """
-    Saves a selected job to the SELECTED_JOBS_FILE.
-
-    Args:
-        job_data (dict): A dictionary containing job details and evaluation.
-    
-    Output:
-        None. Writes to SELECTED_JOBS_FILE.
-    """
     selections = load_json_file(SELECTED_JOBS_FILE)
     selections.append(job_data)
     save_json_file(selections, SELECTED_JOBS_FILE)
 
 def filter_new_jobs(jobs, seen_job_ids):
-    """
-    Filters out jobs that have already been seen based on their IDs.
-
-    Args:
-        jobs (list): A list of job dictionaries. Each job dictionary is expected to have an 'id' key.
-        seen_job_ids (list): A list of IDs of jobs that have already been seen.
-    
-    Returns:
-        list: A new list containing only the jobs that have not been seen before.
-    """
+    """Filters out jobs that have already been seen."""
     return [job for job in jobs if job.get('id') and job.get('id') not in seen_job_ids]
+
+def scrape_full_description(job):
+    """Scrapes the full job description from the redirect URL."""
+    redirect_url = job.get('redirect_url')
+    original_description = job.get('description', '')
+
+    if not redirect_url:
+        job['full_description'] = original_description
+        return job
+
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1', # Do Not Track
+            'Upgrade-Insecure-Requests': '1'
+        }
+        page_response = session.get(redirect_url, headers=headers, timeout=15)
+        page_response.raise_for_status()
+        soup = BeautifulSoup(page_response.text, 'html.parser')
+        
+        description_div = soup.find('section', class_='adp-body') or soup.find('div', class_='job-description')
+        job['full_description'] = description_div.get_text(separator='\n', strip=True) if description_div else original_description
+    
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to fetch {redirect_url}: {e}", exc_info=True)
+        job['full_description'] = original_description
+        
+    return job
+
+def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
+    """Fetches job listings from Adzuna with a primary and secondary keyword strategy."""
+    app_id = os.getenv("ADZUNA_APP_ID")
+    app_key = os.getenv("ADZUNA_APP_KEY")
+
+    if not app_id or not app_key:
+        logging.error("Adzuna API credentials not found.")
+        return []
+
+    base_url = "https://api.adzuna.com/v1/api/jobs/us/search"
+    params = {
+        'app_id': app_id,
+        'app_key': app_key,
+        'results_per_page': 50,
+        'what': primary_keyword,
+        'what_or': ' '.join(secondary_keywords),
+        'where': profile.get('location', 'remote'),
+        'sort_by': 'date',
+        'max_days_old': MAX_DAYS_OLD
+    }
+
+    all_jobs = []
+    for page in range(1, MAX_PAGES + 1):
+        try:
+            response = requests.get(f"{base_url}/{page}", params=params)
+            response.raise_for_status()
+            data = response.json()
+            jobs = data.get('results', [])
+            all_jobs.extend(jobs)
+            if len(jobs) < params['results_per_page']:
+                break
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            logging.error(f"Error fetching from Adzuna on page {page}: {e}", exc_info=True)
+            break
+
+    return all_jobs
+
+def fetch_indeed_jobs(profile, keywords):
+    """Fetches job listings from Indeed API with retries."""
+    api_key = os.getenv("INDEED_API_KEY")
+    if not api_key:
+        logging.warning("Indeed API key not found, skipping Indeed search.")
+        return []
+
+    base_url = "https://api.indeed.com/ads/apisearch"
+    params = {
+        "publisher": api_key,
+        "q": ' '.join(keywords),
+        "l": profile.get('location', 'remote'),
+        "sort": "date",
+        "limit": 50,
+        "v": "2",
+        "format": "json",
+        "jt": profile.get('work_type', 'fulltime'),
+    }
+
+    all_jobs = []
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('https://', adapter)
+
+    try:
+        response = session.get(base_url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        for item in data.get('results', []):
+            all_jobs.append({
+                'id': item.get('jobkey'),
+                'title': item.get('jobtitle'),
+                'description': item.get('snippet'),
+                'redirect_url': item.get('url'),
+                'company': {'display_name': item.get('company')}
+            })
+    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+        logging.error(f"Error fetching from Indeed: {e}", exc_info=True)
+
+    return all_jobs
+
+def evaluate_job_fit(job, user_profile):
+    """Evaluates job fit using Gemini and calculates skill match."""
+    job_description = job.get('full_description', job.get('description', ''))
+    user_skills = set(skill.lower() for skill in user_profile.get('skills', []))
+    
+    found_skills = {skill for skill in user_skills if skill in job_description.lower()}
+    skill_match_percentage = (len(found_skills) / len(user_skills) * 100) if user_skills else 0
+
+    logging.info(f"Calling Gemini to evaluate job fit for: {job.get('title')}")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        User Profile: {json.dumps(user_profile, indent=2)}
+        Job Description: {job_description}
+
+        Based on the user profile and job description, perform the following tasks:
+        1. Rate the job fit on a scale of 1-10.
+        2. Provide a brief explanation for the rating.
+        3. Write a concise one-paragraph summary of the job role and its key responsibilities.
+
+        Return a JSON object with the keys: "fit_score", "explanation", and "summary".
+        Example: {{"fit_score": 8, "explanation": "The role aligns well...", "summary": "This is a software engineering role..."}}
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        evaluation = json.loads(cleaned_response)
+        
+        evaluation['skill_match_percentage'] = round(skill_match_percentage, 2)
+        evaluation['matched_skills'] = list(found_skills)
+        
+        logging.info(f"Successfully evaluated job fit for: {job.get('title')}")
+        return evaluation
+    except google_exceptions.ResourceExhausted as e:
+        logging.error(f"Gemini API quota exceeded while evaluating job fit: {e}", exc_info=True)
+        return None
+    except Exception as e:
+        logging.error(f"Error evaluating job fit with Gemini: {e}", exc_info=True)
+        return None
 
 # --- CLI Command Group ---
 @click.group()
@@ -103,20 +691,7 @@ def cli():
 
 @cli.command()
 def search():
-    """
-    Fetches, filters, and evaluates new job listings from multiple sources (Adzuna, Indeed).
-    Updates the seen jobs and saves recommended jobs based on fit score.
-
-    Inputs:
-        - Profile data (loaded from profile.json via load_profile).
-        - Seen job IDs (loaded from SEEN_JOBS_FILE via load_json_file).
-        - API keys for Adzuna and Indeed (from .env).
-
-    Outputs:
-        - Updates SEEN_JOBS_FILE with new seen job IDs.
-        - Updates RECOMMENDED_JOBS_FILE with jobs that have a fit score >= 7.
-        - Logs information about the search process, job evaluation, and saving.
-    """
+    """Fetches, filters, and evaluates new job listings from multiple sources."""
     logging.info("--- Running job search ---")
     profile = load_profile()
     if not validate_profile(profile):
@@ -168,7 +743,7 @@ def search():
 
                 fit_score = evaluation.get('fit_score', 0)
                 logging.info(f"  - Fit Score: {fit_score}/10")
-                logging.info(f"  - Skill Match: {evaluation.get('skill_match_percentage')}% ")
+                logging.info(f"  - Skill Match: {evaluation.get('skill_match_percentage')}%")
 
                 if fit_score >= 7:
                     logging.info(f"  - Recommendation: Saving job - {title}")
@@ -176,8 +751,7 @@ def search():
                 else:
                     logging.warning(f"  - Recommendation: Skipping job due to low fit score.")
             
-            # Ensure seen_job_ids is updated with new job IDs
-            seen_job_ids.extend([job['id'] for job in new_jobs if job.get('id')])
+            seen_job_ids.extend(job['id'] for job in new_jobs if job.get('id'))
         else:
             logging.info("No new jobs found.")
     else:
@@ -188,19 +762,7 @@ def search():
 
 @cli.command()
 def review():
-    """
-    Interactively reviews recommended jobs, allowing the user to mark them as interested,
-    not interested, or save for later.
-
-    Inputs:
-        - Recommended jobs (loaded from RECOMMENDED_JOBS_FILE via load_json_file).
-        - User input for each job (i, n, s).
-
-    Outputs:
-        - Moves interested jobs to SELECTED_JOBS_FILE.
-        - Keeps unreviewed or 'save for later' jobs in RECOMMENDED_JOBS_FILE.
-        - Logs user choices.
-    """
+    """Interactively review recommended jobs."""
     recommendations = load_json_file(RECOMMENDED_JOBS_FILE)
     if not recommendations:
         logging.info("No recommended jobs to review. Run `search` first.")
@@ -214,7 +776,7 @@ def review():
         click.echo("\n" + "-"*80)
         click.echo(f"Title: {job_details.get('title')}")
         click.echo(f"Company: {job_details.get('company', {}).get('display_name')}")
-        click.echo(f"Fit Score: {evaluation.get('fit_score')}/10 | Skill Match: {evaluation.get('skill_match_percentage')}% ")
+        click.echo(f"Fit Score: {evaluation.get('fit_score')}/10 | Skill Match: {evaluation.get('skill_match_percentage')}%")
         click.echo(f"Summary: {evaluation.get('summary')}")
         click.echo("-"*80)
 
@@ -236,19 +798,7 @@ def review():
 
 @cli.command()
 def generate():
-    """
-    Interactively generates application materials (cover letter, resume suggestions, Q&A)
-    for selected jobs using the Gemini API. Allows for regeneration with custom prompts.
-
-    Inputs:
-        - Selected jobs (loaded from SELECTED_JOBS_FILE via load_json_file).
-        - User profile (loaded from profile.json via load_profile).
-        - User input for regeneration prompts.
-
-    Outputs:
-        - Saves generated materials to GENERATED_MATERIALS_FILE.
-        - Logs generation progress and user interactions.
-    """
+    """Interactively generates application materials for selected jobs."""
     selected_jobs = load_json_file(SELECTED_JOBS_FILE)
     if not selected_jobs:
         logging.info("No selected jobs to generate materials for. Run `review` first.")
@@ -281,19 +831,7 @@ def generate():
 
 @cli.command()
 def refine():
-    """
-    Automatically refines, validates, and approves generated application materials.
-    This process includes generating a refined resume, simulating ATS scores,
-    validating materials with Gemini, and applying feedback.
-
-    Inputs:
-        - Generated materials (loaded from GENERATED_MATERIALS_FILE via load_json_file).
-        - User profile (loaded from profile.json via load_profile).
-
-    Outputs:
-        - Saves approved and refined materials to EDITED_MATERIALS_FILE.
-        - Logs refinement progress, ATS scores, and validation feedback.
-    """
+    """Automatically refines, validates, and approves generated application materials."""
     generated_materials = load_json_file(GENERATED_MATERIALS_FILE)
     if not generated_materials:
         click.echo("No generated materials to refine. Run `generate` first.")
@@ -340,17 +878,7 @@ def refine():
 
 @cli.command()
 def export_docs():
-    """
-    Exports approved and edited application materials to DOCX files.
-    Each job's materials are saved as a separate DOCX file in the 'applications' directory.
-
-    Inputs:
-        - Approved materials (loaded from EDITED_MATERIALS_FILE via load_json_file).
-
-    Outputs:
-        - DOCX files in the 'applications' directory.
-        - Logs the path of each exported document.
-    """
+    """Exports approved and edited materials to DOCX and JSON files."""
     approved_materials = load_json_file(EDITED_MATERIALS_FILE)
     if not approved_materials:
         click.echo("No approved materials to export. Run `refine` first.")
@@ -360,52 +888,62 @@ def export_docs():
     output_dir = "applications"
     os.makedirs(output_dir, exist_ok=True)
 
+    profile = load_profile()
+    name = profile.get('name', 'Applicant Name')
+    contact_info = profile.get('contact_info', {})
+    location = profile.get('location', 'N/A')
+
+    # Construct the personal information header
+    header_text = f"{name}\n"
+    if contact_info.get('phone'):
+        header_text += f"{contact_info['phone']} | "
+    if contact_info.get('email'):
+        header_text += f"{contact_info['email']} | "
+    if contact_info.get('linkedin'):
+        header_text += f"{contact_info['linkedin']} | "
+    header_text += f"{location}"
+
     for item in approved_materials:
         job_details = item.get('job_details', {})
         materials = item.get('generated_materials', {})
-        company = job_details.get('company', {}).get('display_name', 'N/A').replace(' ', '_')
-        title = job_details.get('title', 'N/A').replace(' ', '_')
-        doc_path = os.path.join(output_dir, f"{company}_{title}.docx")
+        company = job_details.get('company', {}).get('display_name', 'N/A').replace(' ', '_').replace('/', '_')
+        title = job_details.get('title', 'N/A').replace(' ', '_').replace('/', '_')
 
-        doc = docx.Document()
-        doc.add_heading(job_details.get('title'), level=1)
-        doc.add_heading(f"Company: {job_details.get('company', {}).get('display_name')}", level=2)
-
-        doc.add_heading("Cover Letter", level=2)
-        doc.add_paragraph(materials.get('cover_letter', 'Not generated.'))
-
-        doc.add_heading("Refined Resume", level=2)
-        doc.add_paragraph(materials.get('refined_resume', 'Not generated.'))
-
-        doc.add_heading("Question Answers", level=2)
-        for qa in materials.get('question_answers', []):
-            doc.add_heading(qa.get('question'), level=3)
-            doc.add_paragraph(qa.get('answer'))
+        # --- Export Cover Letter ---
+        cover_letter_doc = docx.Document()
+        cover_letter_doc.add_paragraph(header_text)
+        cover_letter_doc.add_heading(job_details.get('title'), level=1)
+        cover_letter_doc.add_heading(f"Company: {job_details.get('company', {}).get('display_name')}", level=2)
         
-        doc.save(doc_path)
-        logging.info(f"Exported materials to {doc_path}")
-    click.echo(f"Successfully exported {len(approved_materials)} documents to the 'applications' folder.")
+        cover_letter_doc.add_paragraph(materials.get('cover_letter', 'Not generated.'))
+        cover_letter_path = os.path.join(output_dir, f"{company}_{title}_CoverLetter.docx")
+        cover_letter_doc.save(cover_letter_path)
+        logging.info(f"Exported cover letter to {cover_letter_path}")
+
+        # --- Export Refined Resume ---
+        resume_doc = docx.Document()
+        resume_doc.add_paragraph(header_text)
+        
+        resume_doc.add_paragraph(materials.get('refined_resume', 'Not generated.'))
+        resume_path = os.path.join(output_dir, f"{company}_{title}_Resume.docx")
+        resume_doc.save(resume_path)
+        logging.info(f"Exported refined resume to {resume_path}")
+
+        # --- Export Question Answers (JSON) ---
+        question_answers = materials.get('question_answers', [])
+        if question_answers:
+            qa_path = os.path.join(output_dir, f"{company}_{title}_Questions.json")
+            save_json_file(question_answers, qa_path)
+            logging.info(f"Exported questions and answers to {qa_path}")
+        else:
+            logging.info(f"No questions and answers to export for {company}_{title}.")
+
+    click.echo(f"Successfully exported materials for {len(approved_materials)} jobs to the 'applications' folder.")
 
 @cli.command()
 @click.argument('resume_path', type=click.Path(exists=True))
 def update_profile(resume_path):
-    """
-    Parses a resume file (PDF or DOCX) and uses AI (Gemini) to update the user's profile.
-    The profile is enhanced with skills, experience summary, suggested keywords, and salary range.
-
-    Args:
-        resume_path (str): The absolute path to the resume file (PDF or DOCX).
-
-    Inputs:
-        - Resume file content (read from resume_path).
-        - Existing user profile (loaded from profile.json via load_profile).
-        - Gemini API for enhancement.
-
-    Outputs:
-        - Updates profile.json with enhanced data.
-        - Updates the profile hash file (.profile_hash).
-        - Logs success or failure of the update.
-    """
+    """Parses a resume and uses AI to update the profile.json."""
     logging.info(f"Starting profile update with resume: {resume_path}")
     resume_text = parse_resume(resume_path)
     if not resume_text:
@@ -434,20 +972,7 @@ def update_profile(resume_path):
 @click.option('--work-type', help='Set your preferred work type (e.g., full_time, contract).')
 @click.option('--salary-range', help='Set your desired salary range (e.g., "100000-120000").')
 def manual_update(skill, location, industry, work_type, salary_range):
-    """
-    Manually updates specific fields in the user's profile.
-
-    Inputs:
-        - skill (tuple): One or more skills to add to the profile.
-        - location (str): The preferred job location.
-        - industry (str): The preferred industry.
-        - work_type (str): The preferred work type (e.g., 'full_time', 'contract').
-        - salary_range (str): The desired salary range (e.g., "100000-120000").
-
-    Outputs:
-        - Updates profile.json with the specified manual changes.
-        - Logs success or failure of the update.
-    """
+    """Manually update your profile."""
     profile = load_profile()
     updated = False
     if skill:
@@ -478,13 +1003,7 @@ def manual_update(skill, location, industry, work_type, salary_range):
 
 @cli.command()
 def generate_key():
-    """
-    Generates a new encryption key and prints it to the console.
-    This key should be added to the .env file for securing the profile.
-
-    Outputs:
-        - Prints the generated encryption key to stdout.
-    """
+    """Generates a new encryption key and prints it."""
     key = Fernet.generate_key()
     click.echo("Generated Encryption Key (add this to your .env file):")
     click.echo(f"ENCRYPTION_KEY={key.decode()}")
