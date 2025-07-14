@@ -12,9 +12,8 @@ def _clean_resume_header(resume_text, profile):
     """
     lines = resume_text.split('\n')
     cleaned_lines = []
-    header_removed = False
-
-    # Reconstruct the expected header from the profile data
+    
+    # Reconstruct the expected header from the profile data, mirroring main.py's logic
     name = profile.get('name', '')
     contact_info = profile.get('contact_info', {})
     location = profile.get('location', '')
@@ -34,29 +33,22 @@ def _clean_resume_header(resume_text, profile):
     if location:
         expected_header_parts.append(location)
 
-    expected_header_lines = [part.strip() for part in expected_header_parts if part.strip()]
+    expected_header_string = "\n".join([part.strip() for part in expected_header_parts if part.strip()])
 
-    # Try to remove the exact expected header first
-    temp_resume_text = resume_text
-    for expected_line in expected_header_lines:
-        if temp_resume_text.strip().startswith(expected_line.strip()):
-            temp_resume_text = temp_resume_text.strip()[len(expected_line.strip()):].strip()
-            # Remove any leading separators or empty lines after removing a header part
-            while temp_resume_text.startswith('| ') or temp_resume_text.startswith('\n'):
-                temp_resume_text = temp_resume_text.strip('| ').strip('\n').strip()
-        else:
-            # If a line doesn't match, stop trying to remove the exact header
-            break
-    
-    # Fallback to more general regex patterns if exact match removal wasn't complete
-    lines = temp_resume_text.split('\n')
+    # Attempt to remove the exact expected header string from the beginning of the resume text
+    if resume_text.strip().startswith(expected_header_string.strip()):
+        resume_text = resume_text.strip()[len(expected_header_string.strip()):].strip()
+        logging.debug("Removed exact matching header from resume text.")
+
+    # Fallback to more general regex patterns for any remaining header-like lines
+    lines = resume_text.split('\n')
     for line in lines:
         stripped_line = line.strip()
         # More robust patterns for personal info
         if re.search(r'\b(?:phone|email|linkedin|github|portfolio|website)\b', stripped_line, re.IGNORECASE) or \
            re.search(r'\d{3}[-.\s]?\d{3}[-.\s]?\d{4}', stripped_line) or \
            re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', stripped_line) or \
-           re.search(r'linkedin\.com/in/[a-zA-Z0-9_-]+', stripped_line) or \
+           re.search(r'linkedin\\.com/in/[a-zA-Z0-9_-]+', stripped_line) or \
            re.search(r'[A-Z]{2}, [A-Z]{2}', stripped_line) or \
            re.search(r'[A-Za-z]+, [A-Za-z]+, [A-Za-z]+', stripped_line):
             logging.debug(f"Skipping general header line: {stripped_line}")
@@ -437,7 +429,7 @@ def apply_validation_feedback(materials, validation_feedback):
         """
         response = model.generate_content(prompt)
         refined_resume = response.text.strip()
-        refined_resume = _clean_resume_header(refined_resume) # Clean the header
+        refined_resume = _clean_resume_header(refined_resume, profile) # Pass profile to clean_resume_header
         logging.info(f"Successfully generated refined resume for: {job_title}")
         return refined_resume
     except google_exceptions.ResourceExhausted as e:

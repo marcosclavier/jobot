@@ -142,6 +142,14 @@ def update_profile_hash():
             f.write(current_hash)
         logging.info("Updated profile hash.")
 
+def sanitize_profile_for_generation(profile):
+    """Remove personal info from profile copy to prevent inclusion in generated content."""
+    sanitized = profile.copy()
+    sanitized.pop('name', None)
+    sanitized.pop('contact_info', None)
+    sanitized.pop('location', None)  # Optional: Keep if needed for tailoring, but remove if not.
+    return sanitized
+
 # --- Resume Parsing ---
 def extract_text_from_pdf(file_path):
     """Extracts text from a PDF file."""
@@ -278,13 +286,13 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
             prompt = (
                 "**Objective:** Generate tailored application materials for a job applicant.\n\n"
                 "**Applicant Profile:**\n"
-                f"{json.dumps(profile, indent=2)}\n\n"
+                f"{json.dumps(sanitize_profile_for_generation(profile), indent=2)}\n\n"
                 "**Job Details:**\n"
                 f"{json.dumps(job_data['job_details'], indent=2)}\n\n"
                 "**Custom Instructions:**\n"
                 f"{custom_prompt if custom_prompt else 'No custom instructions provided.'}\n\n"
                 "**Tasks:**\n"
-                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant\'s most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided.\n"
+                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant\'s most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately.\n"
                 "2.  **Resume Adjustments:** Provide a list of specific, actionable suggestions for optimizing the applicant\'s resume for this job. Focus on incorporating keywords from the job description and aligning the experience summary with the role\'s requirements. Incorporate any custom instructions.\n"
                 "3.  **Answer Questions:** If there are questions below, provide thoughtful and detailed answers based on the applicant\'s profile.\n\n"
                 "**Application Questions:**\n"
@@ -377,6 +385,7 @@ def validate_materials_with_gemini(materials):
         Provide a list of actionable suggestions for improvement.
         Focus on clarity, impact, and professionalism. Check for any incomplete sentences or sections.
         If "refined_resume" is present, review that full resume text; otherwise, review "resume_suggestions".
+        Do not comment on the absence of personal information (name, contact details, location) as these are intentionally excluded from the generated content.
 
         Materials:
         ---
@@ -480,7 +489,7 @@ def generate_refined_resume(profile, materials, job_data):
         {json.dumps(suggestions, indent=2)}
         ---
 
-        Task: Create a professional resume based on the applicant profile. Ensure to include the applicant's name, contact information (email, phone, and LinkedIn), and location prominently at the top. Incorporate all the provided suggestions. Tailor it specifically to the job description, highlighting relevant skills and experiences. Ensure the resume is professional, concise, and optimized for ATS systems by including keywords from the job description.
+        Task: Create a professional resume based on the applicant profile. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately. Incorporate all the provided suggestions. Tailor it specifically to the job description, highlighting relevant skills and experiences. Ensure the resume is professional, concise, and optimized for ATS systems by including keywords from the job description.
         
         Return only the full text of the resume, without any additional explanations or formatting.
         """
@@ -656,7 +665,7 @@ def evaluate_job_fit(job, user_profile):
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
-        User Profile: {json.dumps(user_profile, indent=2)}
+        User Profile: {json.dumps(sanitize_profile_for_generation(user_profile), indent=2)}
         Job Description: {job_description}
 
         Based on the user profile and job description, perform the following tasks:
