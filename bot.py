@@ -1,5 +1,4 @@
 """
-
 Job Application Automation Bot
 
 This script automates the process of finding and applying for jobs.
@@ -309,7 +308,7 @@ def simulate_ats_score(job_details, materials):
     logging.info("Simulating ATS score...")
     job_description = job_details.get('full_description', '')
     cover_letter = materials.get('cover_letter', '')
-    resume_text = ' '.join(materials.get('resume_suggestions', []))
+    resume_text = materials.get('refined_resume', ' '.join(materials.get('resume_suggestions', [])))
     full_text = cover_letter + ' ' + resume_text
 
     if not job_description or not full_text:
@@ -353,6 +352,7 @@ def validate_materials_with_gemini(materials):
         Please act as a career coach and review the following application materials.
         Provide a list of actionable suggestions for improvement.
         Focus on clarity, impact, and professionalism. Check for any incomplete sentences or sections.
+        If "refined_resume" is present, review that full resume text; otherwise, review "resume_suggestions".
 
         Materials:
         ---
@@ -393,6 +393,83 @@ def get_gemini_suggestions(text_to_improve, instruction):
     except Exception as e:
         logging.error(f"Error getting suggestions from Gemini: {e}", exc_info=True)
         return "Failed to get suggestion from Gemini."
+
+def apply_validation_feedback(materials, validation_feedback):
+    """Uses Gemini to apply validation feedback to the materials."""
+    if not validation_feedback:
+        logging.info("No validation feedback to apply.")
+        return materials
+
+    logging.info("Applying validation feedback with Gemini...")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-pro')
+        prompt = f"""
+        Current Materials:
+        ---
+        {json.dumps(materials, indent=2)}
+        ---
+
+        Validation Feedback:
+        ---
+        {json.dumps(validation_feedback, indent=2)}
+        ---
+
+        Revise the "cover_letter" and "refined_resume" to address all the feedback points. Make sure the revisions improve clarity, impact, professionalism, and incorporate any suggestions.
+
+        Return a JSON object with keys "cover_letter" and "refined_resume", containing the revised texts.
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        revised = json.loads(cleaned_response)
+        materials['cover_letter'] = revised.get('cover_letter', materials['cover_letter'])
+        materials['refined_resume'] = revised.get('refined_resume', materials['refined_resume'])
+        logging.info("Successfully applied feedback.")
+        return materials
+    except Exception as e:
+        logging.error(f"Error applying validation feedback: {e}", exc_info=True)
+        return materials
+
+# --- New Function for Refined Resume ---
+def generate_refined_resume(profile, materials, job_data):
+    """Uses Gemini to generate a refined resume based on profile and suggestions."""
+    suggestions = materials.get('resume_suggestions', [])
+    job_description = job_data.get('job_details', {}).get('full_description', '')
+    job_title = job_data.get('job_details', {}).get('title', 'N/A')
+    
+    logging.info(f"Generating refined resume for: {job_title}")
+    
+    try:
+        model = genai.GenerativeModel('gemini-1.5-pro')
+        prompt = f"""
+        Applicant Profile:
+        ---
+        {json.dumps(profile, indent=2)}
+        ---
+
+        Job Description:
+        ---
+        {job_description[:4000]}
+        ---
+
+        Resume Suggestions:
+        ---
+        {json.dumps(suggestions, indent=2)}
+        ---
+
+        Task: Create a professional resume based on the applicant profile. Incorporate all the provided suggestions. Tailor it specifically to the job description, highlighting relevant skills and experiences. Ensure the resume is professional, concise, and optimized for ATS systems by including keywords from the job description.
+        
+        Return only the full text of the resume, without any additional explanations or formatting.
+        """
+        response = model.generate_content(prompt)
+        refined_resume = response.text.strip()
+        logging.info(f"Successfully generated refined resume for: {job_title}")
+        return refined_resume
+    except google_exceptions.ResourceExhausted as e:
+        logging.error(f"Gemini API quota exceeded while generating refined resume for {job_title}: {e}", exc_info=True)
+        return "Failed to generate refined resume due to API quota."
+    except Exception as e:
+        logging.error(f"Error generating refined resume for {job_title}: {e}", exc_info=True)
+        return "Failed to generate refined resume."
 
 # --- Job Search & File Management ---
 def load_json_file(file_path):
@@ -650,7 +727,7 @@ def search():
                 else:
                     logging.warning(f"  - Recommendation: Skipping job due to low fit score.")
             
-            seen_job_ids.extend(job['id'] for job in new_jobs)
+            seen_job_ids.extend(job['id'] for job in new_jobs if job.get('id'))
         else:
             logging.info("No new jobs found.")
     else:
@@ -740,7 +817,6 @@ def generate():
                 custom_prompt = click.prompt("Enter your regeneration instructions (e.g., 'make the cover letter more formal')")
                 generated_job_data = generate_application_materials(job_data, profile, custom_prompt=custom_prompt)
                 if not generated_job_data:
-                    # If regeneration fails, break the inner loop to not get stuck
                     click.echo("Failed to regenerate materials. Skipping this job.")
                     break
     
@@ -752,134 +828,51 @@ def generate():
         logging.info("No materials were generated in this session.")
 
 @cli.command()
-@click.option('--approve-all', is_flag=True, help='Approve all materials without interactive review.')
-def refine(approve_all):
-    """Interactively refine, validate, and approve generated application materials."""
-    # Temporarily elevate logging level for a cleaner interactive session
-    root_logger = logging.getLogger()
-    stream_handler = None
-    original_level = None
-    for handler in root_logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            stream_handler = handler
-            original_level = stream_handler.level
-            stream_handler.setLevel(logging.WARNING)
-            break
+def refine():
+    """Automatically refines, validates, and approves generated application materials."""
+    generated_materials = load_json_file(GENERATED_MATERIALS_FILE)
+    if not generated_materials:
+        click.echo("No generated materials to refine. Run `generate` first.")
+        logging.info("No generated materials to refine. Run `generate` first.")
+        return
+
+    approved_materials = []
+    profile = load_profile()  # Load profile for refined resume generation
     
-    try:
-        generated_materials = load_json_file(GENERATED_MATERIALS_FILE)
-        if not generated_materials:
-            click.echo("No generated materials to refine. Run `generate` first.")
-            logging.info("No generated materials to refine. Run `generate` first.")
-            return
+    for i, item in enumerate(generated_materials):
+        job_details = item.get('job_details', {})
+        materials = item.get('generated_materials', {}).copy() # Use a copy to edit
+        job_data = item  # For refined resume
+        job_title = job_details.get('title', 'N/A')
 
-        approved_materials = []
-        
-        for i, item in enumerate(generated_materials):
-            job_details = item.get('job_details', {})
-            materials = item.get('generated_materials', {}).copy() # Use a copy to edit
-            job_title = job_details.get('title', 'N/A')
+        click.echo(f"Refining {job_title}...")
 
-            click.echo("\n" + "="*80)
-            click.echo(f"Refining item {i+1}/{len(generated_materials)}: {job_title}")
-            click.echo("="*80)
+        # Generate initial refined resume
+        refined_resume = generate_refined_resume(profile, materials, item)
+        materials['refined_resume'] = refined_resume
 
-            if approve_all:
-                ats_results = simulate_ats_score(job_details, materials)
-                item['ats_score'] = ats_results
-                approved_materials.append(item)
-                click.echo(f"Auto-approved: {job_title}")
-                logging.info(f"Auto-approved: {job_title}")
-                continue
+        # Simulate ATS
+        ats_results = simulate_ats_score(job_details, materials)
+        item['ats_score'] = ats_results
 
-            materials_changed = True
-            while True:
-                if materials_changed:
-                    click.secho("\n--- Current Materials ---", fg='cyan')
-                    click.echo(f"Cover Letter:\n{materials.get('cover_letter', 'N/A')}")
-                    click.echo("\nResume Suggestions:")
-                    for idx, suggestion in enumerate(materials.get('resume_suggestions', [])):
-                        click.echo(f"  [{idx}] {suggestion}")
+        # Validate
+        validation_feedback = validate_materials_with_gemini(materials)
 
-                    click.secho("\n--- Analysis ---", fg='yellow')
-                    ats_results = simulate_ats_score(job_details, materials)
-                    item['ats_score'] = ats_results
-                    click.echo(f"Simulated ATS Score: {ats_results.get('score')}%")
-                    if ats_results.get('missing_keywords'):
-                        click.echo(f"  Missing Keywords: {', '.join(ats_results['missing_keywords'][:5])}...")
+        # Apply feedback
+        materials = apply_validation_feedback(materials, validation_feedback)
 
-                    validation_feedback = validate_materials_with_gemini(materials)
-                    click.echo("AI Validation Feedback:")
-                    if validation_feedback:
-                        for feedback in validation_feedback:
-                            click.echo(f"  - {feedback}")
-                    else:
-                        click.echo("  - No feedback provided.")
-                    
-                    materials_changed = False
+        # Re-simulate ATS after revision
+        ats_results = simulate_ats_score(job_details, materials)
+        item['ats_score'] = ats_results
 
-                click.secho("\n--- Actions ---", fg='green')
-                action = click.prompt(
-                    "Choose an action: [a]pprove, [e]dit, [i]mprove with AI, [s]kip",
-                    type=click.Choice(['a', 'e', 'i', 's'], case_sensitive=False)
-                ).lower()
+        item['generated_materials'] = materials
+        approved_materials.append(item)
 
-                if action == 'a':
-                    item['generated_materials'] = materials
-                    approved_materials.append(item)
-                    click.echo(f"Approved materials for: {job_title}")
-                    break
-                
-                elif action == 's':
-                    click.echo(f"Skipped materials for: {job_title}")
-                    break
-
-                elif action == 'e':
-                    section = click.prompt("Edit which section? [c]over letter, [r]esume suggestion", type=click.Choice(['c', 'r'])).lower()
-                    if section == 'c':
-                        edited_text = click.edit(materials.get('cover_letter', ''))
-                        if edited_text is not None:
-                            materials['cover_letter'] = edited_text
-                            click.echo("Cover letter updated.")
-                            materials_changed = True
-                    elif section == 'r':
-                        sugg_index = click.prompt("Which suggestion number to edit?", type=int)
-                        suggestions = materials.get('resume_suggestions', [])
-                        if 0 <= sugg_index < len(suggestions):
-                            edited_suggestion = click.edit(suggestions[sugg_index])
-                            if edited_suggestion is not None:
-                                materials['resume_suggestions'][sugg_index] = edited_suggestion
-                                click.echo(f"Resume suggestion {sugg_index} updated.")
-                                materials_changed = True
-                        else:
-                            click.echo("Invalid suggestion number.", err=True)
-                
-                elif action == 'i':
-                    text_to_improve = click.prompt("Paste the text you want to improve")
-                    instruction = click.prompt("What should be improved? (e.g., 'make it more professional')")
-                    if text_to_improve and instruction:
-                        suggestion = get_gemini_suggestions(text_to_improve, instruction)
-                        click.echo("\n--- AI Suggestion ---")
-                        click.echo(suggestion)
-                        click.echo("--- End Suggestion ---")
-                        use_suggestion = click.prompt(
-                            "Do you want to use this suggestion? [y/n]",
-                            type=click.Choice(['y', 'n'], case_sensitive=False),
-                            default='n'
-                        ).lower()
-                        if use_suggestion == 'y':
-                            click.echo("Great! Please use the [e]dit option to manually apply the suggestion.")
-
-        if approved_materials:
-            save_json_file(approved_materials, EDITED_MATERIALS_FILE)
-            click.echo(f"Saved {len(approved_materials)} approved material sets to {EDITED_MATERIALS_FILE}.")
-        else:
-            click.echo("No materials were approved in this session.")
-
-    finally:
-        # Restore original logging level
-        if stream_handler and original_level is not None:
-            stream_handler.setLevel(original_level)
+    if approved_materials:
+        save_json_file(approved_materials, EDITED_MATERIALS_FILE)
+        click.echo(f"Saved {len(approved_materials)} approved material sets to {EDITED_MATERIALS_FILE}.")
+    else:
+        click.echo("No materials were approved in this session.")
 
 @cli.command()
 def export_docs():
@@ -896,8 +889,8 @@ def export_docs():
     for item in approved_materials:
         job_details = item.get('job_details', {})
         materials = item.get('generated_materials', {})
-        company = job_details.get('company', {}).get('display_name', 'N_A').replace(' ', '_')
-        title = job_details.get('title', 'N_A').replace(' ', '_')
+        company = job_details.get('company', {}).get('display_name', 'N/A').replace(' ', '_')
+        title = job_details.get('title', 'N/A').replace(' ', '_')
         doc_path = os.path.join(output_dir, f"{company}_{title}.docx")
 
         doc = docx.Document()
@@ -907,9 +900,8 @@ def export_docs():
         doc.add_heading("Cover Letter", level=2)
         doc.add_paragraph(materials.get('cover_letter', 'Not generated.'))
 
-        doc.add_heading("Resume Suggestions", level=2)
-        for suggestion in materials.get('resume_suggestions', []):
-            doc.add_paragraph(suggestion, style='List Bullet')
+        doc.add_heading("Refined Resume", level=2)
+        doc.add_paragraph(materials.get('refined_resume', 'Not generated.'))
 
         doc.add_heading("Question Answers", level=2)
         for qa in materials.get('question_answers', []):
