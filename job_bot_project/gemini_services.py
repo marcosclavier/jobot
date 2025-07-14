@@ -5,7 +5,20 @@ from google.api_core import exceptions as google_exceptions
 from bs4 import BeautifulSoup
 
 def enhance_profile_with_gemini(resume_text):
-    """Uses Gemini to enhance the user profile based on resume text."""
+    """
+    Uses Gemini to enhance the user profile based on resume text.
+
+    Args:
+        resume_text (str): The extracted text content from the user's resume.
+
+    Inputs:
+        - resume_text (str): Text content of the resume.
+        - Gemini API (gemini-1.5-flash model).
+
+    Returns:
+        dict or None: A dictionary containing enhanced profile data (enhanced_skills, experience_summary,
+                      suggested_keywords, salary_range) if successful, None otherwise.
+    """
     if not resume_text:
         logging.error("Cannot enhance profile, resume text is empty.")
         return None
@@ -24,6 +37,10 @@ def enhance_profile_with_gemini(resume_text):
         ---
 
         Return the output as a JSON object with the following keys:
+        - "name": The full name of the applicant.
+        - "contact_info": A dictionary with "email", "phone", and "linkedin" (URL).
+        - "education": A list of educational entries, each with "institution", "degree", "field_of_study", and "graduation_year".
+        - "work_experience": A list of work experiences, each with "company", "title", "start_date", "end_date", and "responsibilities" (a list of strings).
         - "enhanced_skills": A list of key skills and technologies found.
         - "experience_summary": A brief summary of the professional experience.
         - "suggested_keywords": A list of 10-15 suggested keywords for job searching.
@@ -31,6 +48,14 @@ def enhance_profile_with_gemini(resume_text):
 
         Example JSON output:
         {{
+          "name": "John Doe",
+          "contact_info": {{"email": "john.doe@example.com", "phone": "123-456-7890", "linkedin": "https://linkedin.com/in/johndoe"}},
+          "education": [
+            {{"institution": "University of Example", "degree": "M.Sc.", "field_of_study": "Computer Science", "graduation_year": "2020"}}
+          ],
+          "work_experience": [
+            {{"company": "Tech Solutions Inc.", "title": "Software Engineer", "start_date": "Jan 2021", "end_date": "Present", "responsibilities": ["Developed scalable web applications", "Collaborated with cross-functional teams"]}}
+          ],
           "enhanced_skills": ["Python", "Data Analysis", "Machine Learning", "SQL"],
           "experience_summary": "A data scientist with 5 years of experience...",
           "suggested_keywords": ["Data Scientist", "Python Developer", "AI Engineer"],
@@ -49,7 +74,19 @@ def enhance_profile_with_gemini(resume_text):
         return None
 
 def expand_keywords_with_gemini(base_keywords):
-    """Expands a list of keywords using Gemini for better search results."""
+    """
+    Expands a list of keywords using Gemini for better search results.
+
+    Args:
+        base_keywords (list): A list of initial keywords (e.g., skills from the user's profile).
+
+    Inputs:
+        - base_keywords (list): List of keywords to expand.
+        - Gemini API (gemini-1.5-flash model).
+
+    Returns:
+        list: A combined list of original and expanded keywords, with duplicates removed.
+    """
     logging.info("Calling Gemini to expand keywords...")
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -71,7 +108,19 @@ def expand_keywords_with_gemini(base_keywords):
         return base_keywords # Fallback to original keywords
 
 def extract_questions_from_description(html_content):
-    """Extracts potential application questions from a job description."""
+    """
+    Extracts potential application questions from a job description's HTML content.
+    Looks for sentences ending with a question mark within list items or paragraphs.
+
+    Args:
+        html_content (str): The HTML content of the job description.
+
+    Inputs:
+        - html_content (str): HTML string of the job description.
+
+    Returns:
+        list: A list of strings, where each string is a potential question.
+    """
     soup = BeautifulSoup(html_content, 'html.parser')
     questions = []
     for tag in soup.find_all(['li', 'p']):
@@ -80,7 +129,24 @@ def extract_questions_from_description(html_content):
     return questions
 
 def generate_application_materials(job_data, profile, custom_prompt=""):
-    """Generates cover letter, resume suggestions, and answers to questions for a job."""
+    """
+    Generates cover letter, resume suggestions, and answers to questions for a job
+    using the Gemini API, tailored to the user's profile and job details.
+
+    Args:
+        job_data (dict): A dictionary containing job details, including 'job_details' and 'full_description'.
+        profile (dict): The user's profile data.
+        custom_prompt (str, optional): Additional instructions for Gemini. Defaults to "".
+
+    Inputs:
+        - job_data (dict): Job details (title, full_description, etc.).
+        - profile (dict): User's professional profile.
+        - custom_prompt (str): Optional custom instructions for generation.
+        - Gemini API (gemini-1.5-pro model).
+
+    Returns:
+        dict or None: The updated job_data dictionary including 'generated_materials' if successful, None otherwise.
+    """
     job_title = job_data.get('job_details', {}).get('title', 'N/A')
     logging.info(f"Generating materials for: {job_title}")
 
@@ -88,7 +154,7 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
     questions = extract_questions_from_description(job_description)
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-pro')
         
         prompt = (
             "**Objective:** Generate tailored application materials for a job applicant.\n\n"
@@ -128,7 +194,22 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
 
 # --- Material Refinement ---
 def simulate_ats_score(job_details, materials):
-    """Simulates an ATS score by matching keywords."""
+    """
+    Simulates an ATS (Applicant Tracking System) score by matching keywords
+    from the job description with the generated application materials.
+
+    Args:
+        job_details (dict): A dictionary containing the job's details, including 'full_description'.
+        materials (dict): A dictionary containing the generated application materials (cover_letter, refined_resume, resume_suggestions).
+
+    Inputs:
+        - job_details (dict): Job description to extract keywords from.
+        - materials (dict): Application materials to check for keywords.
+        - Gemini API (gemini-1.5-flash model).
+
+    Returns:
+        dict: A dictionary with 'score' (percentage match), 'matched_keywords', and 'missing_keywords'.
+    """
     logging.info("Simulating ATS score...")
     job_description = job_details.get('full_description', '')
     cover_letter = materials.get('cover_letter', '')
@@ -168,7 +249,20 @@ def simulate_ats_score(job_details, materials):
         return {"score": 0, "matched_keywords": [], "missing_keywords": []}
 
 def validate_materials_with_gemini(materials):
-    """Uses Gemini to validate the completeness and quality of application materials."""
+    """
+    Uses Gemini to validate the completeness and quality of application materials.
+    Provides actionable suggestions for improvement.
+
+    Args:
+        materials (dict): A dictionary containing the generated application materials.
+
+    Inputs:
+        - materials (dict): Application materials to validate.
+        - Gemini API (gemini-1.5-flash model).
+
+    Returns:
+        list: A list of strings, where each string is a validation feedback/suggestion.
+    """
     logging.info("Calling Gemini to validate materials...")
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -196,10 +290,24 @@ def validate_materials_with_gemini(materials):
         return ["Failed to get validation from Gemini."]
 
 def get_gemini_suggestions(text_to_improve, instruction):
-    """Uses Gemini to improve a specific piece of text based on instructions."""
+    """
+    Uses Gemini to improve a specific piece of text based on provided instructions.
+
+    Args:
+        text_to_improve (str): The original text to be improved.
+        instruction (str): The instruction for Gemini on how to revise the text.
+
+    Inputs:
+        - text_to_improve (str): Original text.
+        - instruction (str): Instructions for revision.
+        - Gemini API (gemini-1.5-pro model).
+
+    Returns:
+        str: The revised text from Gemini, or an error message if the call fails.
+    """
     logging.info("Calling Gemini for text improvement suggestions...")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash') # Using pro for better writing
+        model = genai.GenerativeModel('gemini-1.5-pro') # Using pro for better writing
         prompt = f"""
         Please revise the following text based on the user's instruction.
         Return only the revised text, without any extra formatting or explanation.
@@ -219,7 +327,21 @@ def get_gemini_suggestions(text_to_improve, instruction):
         return "Failed to get suggestion from Gemini."
 
 def apply_validation_feedback(materials, validation_feedback):
-    """Uses Gemini to apply validation feedback to the materials."""
+    """
+    Uses Gemini to apply validation feedback to the application materials (cover letter and refined resume).
+
+    Args:
+        materials (dict): A dictionary containing the generated application materials.
+        validation_feedback (list): A list of strings, where each string is a validation feedback/suggestion.
+
+    Inputs:
+        - materials (dict): Current application materials.
+        - validation_feedback (list): Feedback from validation.
+        - Gemini API (gemini-1.5-flash model).
+
+    Returns:
+        dict: The updated materials dictionary with revised cover_letter and refined_resume.
+    """
     if not validation_feedback:
         logging.info("No validation feedback to apply.")
         return materials
@@ -244,18 +366,40 @@ def apply_validation_feedback(materials, validation_feedback):
         """
         response = model.generate_content(prompt)
         cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
-        revised = json.loads(cleaned_response)
-        materials['cover_letter'] = revised.get('cover_letter', materials['cover_letter'])
-        materials['refined_resume'] = revised.get('refined_resume', materials['refined_resume'])
-        logging.info("Successfully applied feedback.")
-        return materials
+        try:
+            revised = json.loads(cleaned_response)
+            materials['cover_letter'] = revised.get('cover_letter', materials['cover_letter'])
+            materials['refined_resume'] = revised.get('refined_resume', materials['refined_resume'])
+            logging.info("Successfully applied feedback.")
+            return materials
+        except json.JSONDecodeError as json_e:
+            logging.error(f"JSONDecodeError when applying validation feedback: {json_e}")
+            logging.error(f"Problematic response: {cleaned_response}")
+            return materials
     except Exception as e:
         logging.error(f"Error applying validation feedback: {e}", exc_info=True)
         return materials
 
 # --- New Function for Refined Resume ---
 def generate_refined_resume(profile, materials, job_data):
-    """Uses Gemini to generate a refined resume based on profile and suggestions."""
+    """
+    Uses Gemini to generate a refined resume based on the user's profile and resume suggestions.
+    The generated resume is tailored to the specific job description.
+
+    Args:
+        profile (dict): The user's profile data.
+        materials (dict): A dictionary containing generated application materials, including 'resume_suggestions'.
+        job_data (dict): A dictionary containing job details, including 'job_details' and 'full_description'.
+
+    Inputs:
+        - profile (dict): User's professional profile.
+        - materials (dict): Generated application materials with resume suggestions.
+        - job_data (dict): Job details (full_description, title).
+        - Gemini API (gemini-1.5-pro model).
+
+    Returns:
+        str: The full text of the refined resume, or an error message if generation fails.
+    """
     suggestions = materials.get('resume_suggestions', [])
     job_description = job_data.get('job_details', {}).get('full_description', '')
     job_title = job_data.get('job_details', {}).get('title', 'N/A')
@@ -263,7 +407,7 @@ def generate_refined_resume(profile, materials, job_data):
     logging.info(f"Generating refined resume for: {job_title}")
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-pro')
         prompt = f"""
         Applicant Profile:
         ---
@@ -296,7 +440,22 @@ def generate_refined_resume(profile, materials, job_data):
         return "Failed to generate refined resume."
 
 def evaluate_job_fit(job, user_profile):
-    """Evaluates job fit using Gemini and calculates skill match."""
+    """
+    Evaluates job fit using Gemini and calculates a skill match percentage.
+
+    Args:
+        job (dict): A dictionary containing job details, including 'full_description' or 'description'.
+        user_profile (dict): The user's profile data, including 'skills'.
+
+    Inputs:
+        - job (dict): Job details (full_description, description).
+        - user_profile (dict): User's skills and other profile data.
+        - Gemini API (gemini-1.5-flash model).
+
+    Returns:
+        dict or None: A dictionary with 'fit_score', 'explanation', 'summary',
+                      'skill_match_percentage', and 'matched_skills' if successful, None otherwise.
+    """
     job_description = job.get('full_description', job.get('description', ''))
     user_skills = set(skill.lower() for skill in user_profile.get('skills', []))
     

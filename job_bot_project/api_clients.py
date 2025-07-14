@@ -8,7 +8,19 @@ from urllib3.util.retry import Retry
 from .config import MAX_WORKERS, SCRAPE_TIMEOUT, MAX_PAGES, MAX_DAYS_OLD
 
 def scrape_full_description(job):
-    """Scrapes the full job description from the redirect URL."""
+    """
+    Scrapes the full job description from the redirect URL provided in the job data.
+    Uses requests with retries and BeautifulSoup for parsing.
+
+    Args:
+        job (dict): A dictionary containing job details, including 'redirect_url' and 'description'.
+
+    Inputs:
+        - job (dict): Job data with 'redirect_url' and 'description'.
+
+    Returns:
+        dict: The updated job dictionary with an added 'full_description' key.
+    """
     redirect_url = job.get('redirect_url')
     original_description = job.get('description', '')
 
@@ -45,7 +57,23 @@ def scrape_full_description(job):
     return job
 
 def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
-    """Fetches job listings from Adzuna with a primary and secondary keyword strategy."""
+    """
+    Fetches job listings from the Adzuna API.
+
+    Args:
+        profile (dict): The user's profile data, including 'location'.
+        primary_keyword (str): The main keyword for the job search.
+        secondary_keywords (list): A list of additional keywords for the job search.
+
+    Inputs:
+        - profile (dict): User's location.
+        - primary_keyword (str): Main search term.
+        - secondary_keywords (list): Additional search terms.
+        - Adzuna API credentials (from environment variables).
+
+    Returns:
+        list: A list of job dictionaries fetched from Adzuna.
+    """
     app_id = os.getenv("ADZUNA_APP_ID")
     app_key = os.getenv("ADZUNA_APP_KEY")
 
@@ -82,7 +110,21 @@ def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
     return all_jobs
 
 def fetch_indeed_jobs(profile, keywords):
-    """Fetches job listings from Indeed API with retries."""
+    """
+    Fetches job listings from the Indeed API.
+
+    Args:
+        profile (dict): The user's profile data, including 'location' and 'work_type'.
+        keywords (list): A list of keywords for the job search.
+
+    Inputs:
+        - profile (dict): User's location and work type.
+        - keywords (list): Search terms.
+        - Indeed API key (from environment variables).
+
+    Returns:
+        list: A list of job dictionaries fetched from Indeed.
+    """
     api_key = os.getenv("INDEED_API_KEY")
     if not api_key:
         logging.warning("Indeed API key not found, skipping Indeed search.")

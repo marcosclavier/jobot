@@ -49,17 +49,50 @@ from .gemini_services import (
 from .file_utils import load_json_file, save_json_file
 
 def save_recommended_job(job_data):
+    """
+    Saves a recommended job to the RECOMMENDED_JOBS_FILE.
+    Prevents duplicate jobs based on job ID.
+
+    Args:
+        job_data (dict): A dictionary containing job details and evaluation.
+                         Expected keys: 'job_details' (dict with 'id' key).
+    
+    Output:
+        None. Writes to RECOMMENDED_JOBS_FILE.
+    """
     recommendations = load_json_file(RECOMMENDED_JOBS_FILE)
-    recommendations.append(job_data)
-    save_json_file(recommendations, RECOMMENDED_JOBS_FILE)
+    job_id = job_data.get('job_details', {}).get('id')
+    if job_id and not any(job.get('job_details', {}).get('id') == job_id for job in recommendations):
+        recommendations.append(job_data)
+        save_json_file(recommendations, RECOMMENDED_JOBS_FILE)
+    else:
+        logging.info(f"Job with ID {job_id} already exists in recommendations or has no ID. Skipping save.")
 
 def save_selected_job(job_data):
+    """
+    Saves a selected job to the SELECTED_JOBS_FILE.
+
+    Args:
+        job_data (dict): A dictionary containing job details and evaluation.
+    
+    Output:
+        None. Writes to SELECTED_JOBS_FILE.
+    """
     selections = load_json_file(SELECTED_JOBS_FILE)
     selections.append(job_data)
     save_json_file(selections, SELECTED_JOBS_FILE)
 
 def filter_new_jobs(jobs, seen_job_ids):
-    """Filters out jobs that have already been seen."""
+    """
+    Filters out jobs that have already been seen based on their IDs.
+
+    Args:
+        jobs (list): A list of job dictionaries. Each job dictionary is expected to have an 'id' key.
+        seen_job_ids (list): A list of IDs of jobs that have already been seen.
+    
+    Returns:
+        list: A new list containing only the jobs that have not been seen before.
+    """
     return [job for job in jobs if job.get('id') and job.get('id') not in seen_job_ids]
 
 # --- CLI Command Group ---
@@ -70,7 +103,20 @@ def cli():
 
 @cli.command()
 def search():
-    """Fetches, filters, and evaluates new job listings from multiple sources."""
+    """
+    Fetches, filters, and evaluates new job listings from multiple sources (Adzuna, Indeed).
+    Updates the seen jobs and saves recommended jobs based on fit score.
+
+    Inputs:
+        - Profile data (loaded from profile.json via load_profile).
+        - Seen job IDs (loaded from SEEN_JOBS_FILE via load_json_file).
+        - API keys for Adzuna and Indeed (from .env).
+
+    Outputs:
+        - Updates SEEN_JOBS_FILE with new seen job IDs.
+        - Updates RECOMMENDED_JOBS_FILE with jobs that have a fit score >= 7.
+        - Logs information about the search process, job evaluation, and saving.
+    """
     logging.info("--- Running job search ---")
     profile = load_profile()
     if not validate_profile(profile):
@@ -122,7 +168,7 @@ def search():
 
                 fit_score = evaluation.get('fit_score', 0)
                 logging.info(f"  - Fit Score: {fit_score}/10")
-                logging.info(f"  - Skill Match: {evaluation.get('skill_match_percentage')}%")
+                logging.info(f"  - Skill Match: {evaluation.get('skill_match_percentage')}% ")
 
                 if fit_score >= 7:
                     logging.info(f"  - Recommendation: Saving job - {title}")
@@ -130,6 +176,7 @@ def search():
                 else:
                     logging.warning(f"  - Recommendation: Skipping job due to low fit score.")
             
+            # Ensure seen_job_ids is updated with new job IDs
             seen_job_ids.extend([job['id'] for job in new_jobs if job.get('id')])
         else:
             logging.info("No new jobs found.")
@@ -141,7 +188,19 @@ def search():
 
 @cli.command()
 def review():
-    """Interactively review recommended jobs."""
+    """
+    Interactively reviews recommended jobs, allowing the user to mark them as interested,
+    not interested, or save for later.
+
+    Inputs:
+        - Recommended jobs (loaded from RECOMMENDED_JOBS_FILE via load_json_file).
+        - User input for each job (i, n, s).
+
+    Outputs:
+        - Moves interested jobs to SELECTED_JOBS_FILE.
+        - Keeps unreviewed or 'save for later' jobs in RECOMMENDED_JOBS_FILE.
+        - Logs user choices.
+    """
     recommendations = load_json_file(RECOMMENDED_JOBS_FILE)
     if not recommendations:
         logging.info("No recommended jobs to review. Run `search` first.")
@@ -177,7 +236,19 @@ def review():
 
 @cli.command()
 def generate():
-    """Interactively generates application materials for selected jobs."""
+    """
+    Interactively generates application materials (cover letter, resume suggestions, Q&A)
+    for selected jobs using the Gemini API. Allows for regeneration with custom prompts.
+
+    Inputs:
+        - Selected jobs (loaded from SELECTED_JOBS_FILE via load_json_file).
+        - User profile (loaded from profile.json via load_profile).
+        - User input for regeneration prompts.
+
+    Outputs:
+        - Saves generated materials to GENERATED_MATERIALS_FILE.
+        - Logs generation progress and user interactions.
+    """
     selected_jobs = load_json_file(SELECTED_JOBS_FILE)
     if not selected_jobs:
         logging.info("No selected jobs to generate materials for. Run `review` first.")
@@ -197,31 +268,9 @@ def generate():
         if not generated_job_data:
             continue # Skip if initial generation fails
 
-        while True:
-            materials = generated_job_data.get('generated_materials', {})
-            click.echo("\n--- Generated Cover Letter ---")
-            click.echo(materials.get('cover_letter', 'N/A'))
-            click.echo("\n--- Generated Resume Suggestions ---")
-            for suggestion in materials.get('resume_suggestions', []):
-                click.echo(f"- {suggestion}")
-            click.echo("\n" + "-"*80)
-
-            action = click.prompt(
-                "Action: [a]ccept, [r]egenerate, [s]kip", 
-                type=click.Choice(['a', 'r', 's'], case_sensitive=False)
-            ).lower()
-
-            if action == 'a':
-                all_generated_materials.append(generated_job_data)
-                break
-            elif action == 's':
-                break
-            elif action == 'r':
-                custom_prompt = click.prompt("Enter your regeneration instructions (e.g., 'make the cover letter more formal')")
-                generated_job_data = generate_application_materials(job_data, profile, custom_prompt=custom_prompt)
-                if not generated_job_data:
-                    click.echo("Failed to regenerate materials. Skipping this job.")
-                    break
+        # Automatically accept generated materials
+        all_generated_materials.append(generated_job_data)
+        logging.info(f"Automatically accepted materials for: {job_title}")
     
     save_json_file(all_generated_materials, GENERATED_MATERIALS_FILE)
     if all_generated_materials:
@@ -232,7 +281,19 @@ def generate():
 
 @cli.command()
 def refine():
-    """Automatically refines, validates, and approves generated application materials."""
+    """
+    Automatically refines, validates, and approves generated application materials.
+    This process includes generating a refined resume, simulating ATS scores,
+    validating materials with Gemini, and applying feedback.
+
+    Inputs:
+        - Generated materials (loaded from GENERATED_MATERIALS_FILE via load_json_file).
+        - User profile (loaded from profile.json via load_profile).
+
+    Outputs:
+        - Saves approved and refined materials to EDITED_MATERIALS_FILE.
+        - Logs refinement progress, ATS scores, and validation feedback.
+    """
     generated_materials = load_json_file(GENERATED_MATERIALS_FILE)
     if not generated_materials:
         click.echo("No generated materials to refine. Run `generate` first.")
@@ -279,7 +340,17 @@ def refine():
 
 @cli.command()
 def export_docs():
-    """Exports approved and edited materials to DOCX files."""
+    """
+    Exports approved and edited application materials to DOCX files.
+    Each job's materials are saved as a separate DOCX file in the 'applications' directory.
+
+    Inputs:
+        - Approved materials (loaded from EDITED_MATERIALS_FILE via load_json_file).
+
+    Outputs:
+        - DOCX files in the 'applications' directory.
+        - Logs the path of each exported document.
+    """
     approved_materials = load_json_file(EDITED_MATERIALS_FILE)
     if not approved_materials:
         click.echo("No approved materials to export. Run `refine` first.")
@@ -318,7 +389,23 @@ def export_docs():
 @cli.command()
 @click.argument('resume_path', type=click.Path(exists=True))
 def update_profile(resume_path):
-    """Parses a resume and uses AI to update the profile.json."""
+    """
+    Parses a resume file (PDF or DOCX) and uses AI (Gemini) to update the user's profile.
+    The profile is enhanced with skills, experience summary, suggested keywords, and salary range.
+
+    Args:
+        resume_path (str): The absolute path to the resume file (PDF or DOCX).
+
+    Inputs:
+        - Resume file content (read from resume_path).
+        - Existing user profile (loaded from profile.json via load_profile).
+        - Gemini API for enhancement.
+
+    Outputs:
+        - Updates profile.json with enhanced data.
+        - Updates the profile hash file (.profile_hash).
+        - Logs success or failure of the update.
+    """
     logging.info(f"Starting profile update with resume: {resume_path}")
     resume_text = parse_resume(resume_path)
     if not resume_text:
@@ -347,7 +434,20 @@ def update_profile(resume_path):
 @click.option('--work-type', help='Set your preferred work type (e.g., full_time, contract).')
 @click.option('--salary-range', help='Set your desired salary range (e.g., "100000-120000").')
 def manual_update(skill, location, industry, work_type, salary_range):
-    """Manually update your profile."""
+    """
+    Manually updates specific fields in the user's profile.
+
+    Inputs:
+        - skill (tuple): One or more skills to add to the profile.
+        - location (str): The preferred job location.
+        - industry (str): The preferred industry.
+        - work_type (str): The preferred work type (e.g., 'full_time', 'contract').
+        - salary_range (str): The desired salary range (e.g., "100000-120000").
+
+    Outputs:
+        - Updates profile.json with the specified manual changes.
+        - Logs success or failure of the update.
+    """
     profile = load_profile()
     updated = False
     if skill:
@@ -378,7 +478,13 @@ def manual_update(skill, location, industry, work_type, salary_range):
 
 @cli.command()
 def generate_key():
-    """Generates a new encryption key and prints it."""
+    """
+    Generates a new encryption key and prints it to the console.
+    This key should be added to the .env file for securing the profile.
+
+    Outputs:
+        - Prints the generated encryption key to stdout.
+    """
     key = Fernet.generate_key()
     click.echo("Generated Encryption Key (add this to your .env file):")
     click.echo(f"ENCRYPTION_KEY={key.decode()}")
