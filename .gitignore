@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.log
+jobbot_env/
+venv/
+.venv/
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Sensitive files
+.env
+profile.json
+.profile_hash
+
+# Generated files
+generated_materials.json
+edited_materials.json
+recommended_jobs.json
+seen_jobs.json
+selected_jobs.json
+applications/
+
+# Test cache
+.pytest_cache/

@@ -1,0 +1,102 @@
+
+{
+  "personal": {
+    "name": "Marcos Clavier",
+    "title": "Al Automation & Content Specialist",
+    "location": "Calgary, AB",
+    "phone": "+1 (825) 4883614",
+    "email": "marcos.clavier@outlook.com",
+    "summary": "Since 2016, I've specialized in developing and deploying Al-driven workflow automation solutions to optimize SEO, content creation, and business processes. Proficient in leveraging advanced Al tools, including Langchain, Coding LLMs, Python, and large language models, I design scalable automation systems that enhance efficiency, drive organic traffic, and improve performance metrics. My work has impacted over 30 million users daily through innovative Al applications. Fluent in English, French, and Spanish."
+  },
+  "skills": [
+    "Langchain",
+    "Python",
+    "Large Language Models (LLMs)",
+    "AI Workflow Automation",
+    "SEO",
+    "Google Apps Script",
+    "Ubuntu",
+    "Google Sheets",
+    "Google Search Console",
+    "Ollama",
+    "GPT-4 & GPT-40",
+    "Ahrefs",
+    "SEMrush",
+    "WordPress",
+    "JavaScript",
+    "SurferSEO",
+    "Google Analytics",
+    "Screaming Frog",
+    "Php",
+    "HTML",
+    "CSS",
+    "SQL",
+    "VSCode"
+  ],
+  "experience": [
+    {
+      "role": "Programmatic SEO & AI Workflow Automation Manager",
+      "company": "High Tide Inc. TSXV:HITI",
+      "duration": "July 2024 - Present",
+      "description": "Spearheaded Al-driven automation initiatives for Canada's largest Cannabis eCommerce platforms, developing custom workflows to streamline SEO and content optimization. Built and managed a private API using Ubuntu, Python, Langchain, Ollama, Google Sheets, and Google Apps Script to automate large-scale processes, enhancing site performance and scalability. Designed and implemented Al agents using Langchain and Coding LLMs to automate scraping and rewriting of product descriptions, and image alt text, integrating Google Search Console data to improve SEO, readability, and conversion rates, resulting in a 15% increase in product traffic and a 5% increase in conversion rate. Developed automated workflows for Meta title and description optimization, leveraging GSC keyword insights and Python-based Al scripts to boost click-through rates by 10% and enhance organic search visibility. Created scalable automation pipelines for data extraction, content analysis, and LLM processing, reducing manual effort and driving traffic growth.",
+      "tools": ["Langchain", "Python", "Google Apps Script", "Ubuntu", "Google Sheets", "Google Search Console", "Ollama", "Llama 3.1", "Gemma 2", "VSCode"]
+    },
+    {
+      "role": "Operations Lead (AI & SEO Automation)",
+      "company": "Search Leads",
+      "duration": "January 2024 - July 2024 (8 months)",
+      "description": "Led Al-powered SEO automation and link-building initiatives to enhance eCommerce brand visibility and search rankings across multiple regions. Utilized Langchain and Python to develop custom Al agents for content creation and process optimization, managing a cross-functional team to scale outreach and improve organic traffic. Built an Al-driven tool using Langchain and Coding LLMs to automate guest post identification and content generation, reducing time-to-publish by 40% and scaling outreach efforts. Managed a USD 85,000 monthly budget for international link-building, securing high-quality guest posts in 6 countries to boost domain authority. Directed a team of two engineers and three remote link builders, overseeing Al workflow strategies and optimization of link-building campaigns.",
+      "tools": ["Langchain", "Python", "Google Apps Script", "Google Sheets", "Google Search Console", "GPT-40", "Ahrefs", "SEMrush", "VSCode", "WordPress"]
+    },
+    {
+      "role": "Senior SEO & Al Automation Specialist",
+      "company": "resulta",
+      "duration": "November 2022 - December 2023 (1 year)",
+      "description": "Drove Al adoption for a Nova Scotian marketing agency managing 100+ affiliate sites, focusing on keyword optimization, content automation, and SEO performance. Developed Al workflows using Python and LLMs to streamline content strategies and reporting. Implemented Al-driven keyword optimization and content generation using SurferSEO and GPT-4, enhancing performance for five websites in Finance, Tech, and Crypto. Automated SEO reporting and strategy evaluation, integrating Google Analytics, Google Sheets, and JavaScript to deliver weekly performance insights to leadership. Designed Al workflows to optimize content creation processes, reducing manual effort and improving content scalability.",
+      "tools": ["JavaScript", "SurferSEO", "GPT-4", "Google Search Console", "Google Analytics", "Ahrefs", "Screaming Frog", "WordPress", "VSCode"]
+    },
+    {
+      "role": "Product Owner (SEO & Al Automation)",
+      "company": "MindGeek",
+      "duration": "June 2018 - July 2022 (4 years)",
+      "description": "Managed a portfolio of five WordPress affiliate and eCommerce websites generating 4.5M monthly visits and USD 500,000 annually, focusing on Al-driven SEO and automation solutions. Led the development of custom WordPress plugins to enhance site performance and scalability. Developed three Al-powered WordPress SEO plugins using Python and LLMs: one for auto-de-indexing thin pages, another for Al-generated metadata, and a third for an internal Al-driven search algorithm. Designed automation workflows to streamline link-building and content optimization, integrating data from tracking tools to enhance SEO strategies. Managed link-building budgets and implemented Al tools to improve efficiency and domain authority.",
+      "tools": ["Php", "WordPress", "SEMrush", "Ahrefs", "Similarweb", "Majestic", "Screaming Frog", "Scrapebox", "Google Data Studio", "HTML", "CSS", "VSCode"]
+    },
+    {
+      "role": "App Store Optimization Specialist",
+      "company": "MindGeek",
+      "duration": "July 2018 - July 2022 (4 years)",
+      "description": "Led app store optimization, achieving a 33x increase in monthly downloads (to 125,000) in 8 months for Android and iOS apps through automated testing and content workflows. Built automated A/B testing pipelines using Mobileaction to optimize app store listings and increase download rates. Developed scripts to analyze user data and automate metadata updates, improving app visibility and performance.",
+      "tools": ["Python", "Mobileaction", "AppAnnie", "Google Play Console", "AppTweak", "VSCode"]
+    },
+    {
+      "role": "Web Design & Data Automation Specialist",
+      "company": "William Foukes Laboratory - MUHC/JGH",
+      "duration": "May 2016 June 2018 (2 years)",
+      "description": "Managed digital projects under Dr. William Foukes, focusing on Al-driven web development and data automation for biomedical research. Developed tools to streamline data collection and sharing. Designed and developed https://www.dicer1syndrome.ca, a pioneering website and cloud database for laboratory resource sharing, using WordPress and custom plugins. Built Mipogg, an Al-powered medical diagnosis tool for selected cancer types, integrating PHP and conditional logic for data processing. Automated genetic data collection workflows, contributing to a BMI article (https://pubmed.ncbi.nlm.nih.gov/33875564/).",
+      "tools": ["Python", "WordPress", "HTML", "CSS", "SQL", "Excel", "Access", "VSCode"]
+    }
+  ],
+  "achievements": [
+    "Impacted over 30 million users daily through innovative Al applications.",
+    "Increased product traffic by 15% and conversion rate by 5% at High Tide Inc.",
+    "Boosted click-through rates by 10% through automated Meta title and description optimization.",
+    "Reduced time-to-publish by 40% for guest posts by building an Al-driven identification and content generation tool.",
+    "Managed a USD 85,000 monthly budget for international link-building in 6 countries.",
+    "Managed a portfolio of websites generating 4.5M monthly visits and USD 500,000 annually.",
+    "Achieved a 33x increase in monthly app downloads (to 125,000) in 8 months.",
+    "Contributed to a published BMI article through automated genetic data collection workflows."
+  ],
+  "education": [
+    {
+      "degree": "Masters in Business Administration",
+      "institution": "University of Illinois (Remote, Part-Time)",
+      "duration": "Jul 2023 - Present"
+    },
+    {
+      "degree": "Bachelor of Arts, Economics",
+      "institution": "University of Lethbridge, AB, Canada",
+      "duration": "Sept 2011 - Dec 2013"
+    }
+  ]
+}
