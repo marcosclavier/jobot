@@ -11,5 +11,9 @@ reportlab
 python-dotenv
 schedule
 2captcha-python
+click
+PyPDF2
+python-docx
+cryptography
 
 pandas
