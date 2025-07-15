@@ -15,5 +15,5 @@ click
 PyPDF2
 python-docx
 cryptography
-
+pytest
 pandas

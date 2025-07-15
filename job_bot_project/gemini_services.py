@@ -64,7 +64,7 @@ def enhance_profile_with_gemini(resume_text):
     Args:\n        resume_text (str): The extracted text content from the user\'s resume.
 
     Inputs:\n        - resume_text (str): Text content of the resume.
-        - Gemini API (gemini-1.5-flash model).
+        - Gemini API (gemini-2.5-pro model).
 
     Returns:\n        dict or None: A dictionary containing enhanced profile data (enhanced_skills, experience_summary,
                       suggested_keywords, salary_range) if successful, None otherwise.
@@ -75,7 +75,7 @@ def enhance_profile_with_gemini(resume_text):
     
     logging.info("Calling Gemini to enhance profile...")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         Analyze the following resume text and extract key information to create a professional profile.
         Based on the skills and experience, suggest a realistic salary range.
@@ -126,7 +126,7 @@ def expand_keywords_with_gemini(base_keywords):
     """Expands a list of keywords using Gemini for better search results."""
     logging.info("Calling Gemini to expand keywords...")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         Given the following list of skills, generate a list of 20-30 related and synonymous keywords to improve job search results.
         Return only a comma-separated list of keywords.
@@ -164,7 +164,7 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-pro')
             
             prompt = (
                 "**Objective:** Generate tailored application materials for a job applicant.\n\n"
@@ -227,7 +227,7 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
 
     Inputs:\n        - job_details (dict): Job description to extract keywords from.
         - materials (dict): Application materials to check for keywords.
-        - Gemini API (gemini-1.5-flash model).
+        - Gemini API (gemini-2.5-pro model).
 
     Returns:\n        dict: A dictionary with 'score' (percentage match), 'matched_keywords', and 'missing_keywords'.
     """
@@ -241,7 +241,7 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
         return {"score": 0, "matched_keywords": [], "missing_keywords": []}
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         From the following job description, extract the 20 most important keywords and skills.
         Return them as a JSON list of strings.
@@ -276,13 +276,13 @@ def validate_materials_with_gemini(materials):
         validation_feedback (list): A list of strings, where each string is a validation feedback/suggestion.
 
     Inputs:\n        - materials (dict): Application materials to validate.
-        - Gemini API (gemini-1.5-flash model).
+        - Gemini API (gemini-2.5-pro model).
 
     Returns:\n        list: A list of strings, where each string is a validation feedback/suggestion.
     """
     logging.info("Calling Gemini to validate materials...")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         Please act as a career coach and review the following application materials.
         Provide a list of actionable suggestions for improvement.
@@ -319,7 +319,7 @@ def get_gemini_suggestions(text_to_improve, instruction):
     """
     logging.info("Calling Gemini for text improvement suggestions...")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash') # Using pro for better writing
+        model = genai.GenerativeModel('gemini-2.5-pro') # Using pro for better writing
         prompt = f"""
         Please revise the following text based on the user\'s instruction.
         Return only the revised text, without any extra formatting or explanation.
@@ -345,7 +345,7 @@ def apply_validation_feedback(materials, validation_feedback):
 
     Inputs:\n        - materials (dict): Current application materials.
         - validation_feedback (list): Feedback from validation.
-        - Gemini API (gemini-1.5-flash model).
+        - Gemini API (gemini-2.5-pro model).
 
     Returns:\n        dict: The updated materials dictionary with revised cover_letter and refined_resume.
     """
@@ -355,7 +355,7 @@ def apply_validation_feedback(materials, validation_feedback):
 
     logging.info("Applying validation feedback with Gemini...")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         Current Materials:
         ---\n        {json.dumps(materials, indent=2)}
@@ -406,7 +406,7 @@ def apply_validation_feedback(materials, validation_feedback):
     logging.info(f"Generating refined resume for: {job_title}")
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         # Create a sanitized profile for Gemini to prevent personal info duplication
         sanitized_profile = profile.copy()
         sanitized_profile.pop('name', None)
@@ -448,7 +448,7 @@ def evaluate_job_fit(job, user_profile):
 
     Inputs:\n        - job (dict): Job details (full_description, description).
         - user_profile (dict): User\'s skills and other profile data.
-        - Gemini API (gemini-1.5-flash model).
+        - Gemini API (gemini-2.5-pro model).
 
     Returns:\n        dict or None: A dictionary with 'fit_score', 'explanation', 'summary',
                       'skill_match_percentage', and 'matched_skills' if successful, None otherwise.
@@ -461,7 +461,7 @@ def evaluate_job_fit(job, user_profile):
 
     logging.info(f"Calling Gemini to evaluate job fit for: {job.get('title')}")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         User Profile: {json.dumps(user_profile, indent=2)}
         Job Description: {job_description}

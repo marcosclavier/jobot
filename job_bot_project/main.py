@@ -1,4 +1,5 @@
 
+
 """
 Job Application Automation Bot
 
@@ -27,10 +28,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from google.api_core import exceptions as google_exceptions
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
-import re  # Add this to your imports if not already present (it's standard library)
+
 
 from docx.shared import Pt, Inches
+import re
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
 # --- Logging Configuration ---
@@ -277,7 +281,7 @@ def extract_questions_from_description(html_content):
 
 def generate_application_materials(job_data, profile, custom_prompt=""):
     """Generates cover letter, resume suggestions, and answers to questions for a job."""
-    job_title = job_data.get('job_details', {}).get('title', 'N/A')
+    job_title = job_data.get('job_details', {}).get('title', '')
     logging.info(f"Generating materials for: {job_title}")
 
     job_description = job_data.get('job_details', {}).get('full_description', '')
@@ -294,12 +298,12 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
                 f"{json.dumps(sanitize_profile_for_generation(profile), indent=2)}\n\n"
                 "**Job Details:**\n"
                 f"{json.dumps(job_data['job_details'], indent=2)}\n\n"
-                "**Custom Instructions:**\n"
-                f"{custom_prompt if custom_prompt else 'No custom instructions provided.'}\n\n"
+                "**Custom Instructions:\n" +
+                f"{custom_prompt}\n\n" + \
                 "**Tasks:**\n"
-                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant's most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately.\n"
-                "2.  **Resume Adjustments:** Provide a list of specific, actionable suggestions for optimizing the applicant's resume for this job. Focus on incorporating keywords from the job description and aligning the experience summary with the role's requirements. Incorporate any custom instructions.\n"
-                "3.  **Answer Questions:** If there are questions below, provide thoughtful and detailed answers based on the applicant's profile.\n\n"
+                "1.  **Cover Letter:** Write a professional, enthusiastic, and tailored cover letter. It should highlight the applicant's most relevant skills and experiences from their profile that match the job description. Incorporate any custom instructions provided. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately. Use standard paragraph formatting. Do not use Markdown headings within the cover letter.\n"
+                "2.  **Resume Adjustments:** Provide a list of specific, actionable suggestions for optimizing the applicant's resume for this job. Focus on incorporating keywords from the job description and aligning the experience summary with the role's requirements. Incorporate any custom instructions. Format each suggestion as a bullet point using `- ` or `* `. Use `**bold**` for keywords or important phrases.\n"
+                "3.  **Answer Questions:** If there are questions below, provide thoughtful and detailed answers based on the applicant's profile. Format each answer as a standard paragraph.\n\n"
                 "**Application Questions:**\n"
                 f"{json.dumps(questions) if questions else 'No specific questions found.'}\n\n"
                 "**Output Format:**\n"
@@ -340,9 +344,10 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
     return None
 
 # --- Material Refinement ---
-def simulate_ats_score(job_details, materials):
+def simulate_ats_score(job_data, materials):
     """Simulates an ATS score by matching keywords."""
     logging.info("Simulating ATS score...")
+    job_details = job_data.get('job_details', {})
     job_description = job_details.get('full_description', '')
     cover_letter = materials.get('cover_letter', '')
     resume_text = materials.get('refined_resume', ' '.join(materials.get('resume_suggestions', [])))
@@ -351,34 +356,42 @@ def simulate_ats_score(job_details, materials):
     if not job_description or not full_text:
         return {"score": 0, "matched_keywords": [], "missing_keywords": []}
 
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        From the following job description, extract the 20 most important keywords and skills.
-        Return them as a JSON list of strings.
+    # Check if keywords are already cached
+    if 'ats_keywords' in job_data:
+        keywords = job_data['ats_keywords']
+        logging.info("Using cached ATS keywords.")
+    else:
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"""
+            From the following job description, extract the 20 most important keywords and skills.
+            Return them as a JSON list of strings.
 
-        Job Description:
-        ---
-        {job_description[:4000]}
-        ---
-        """
-        response = model.generate_content(prompt)
-        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
-        keywords = json.loads(cleaned_response)
+            Job Description:
+            ---
+            {job_description[:4000]}
+            ---
+            """
+            response = model.generate_content(prompt)
+            cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+            keywords = json.loads(cleaned_response)
+            job_data['ats_keywords'] = keywords  # Cache the extracted keywords
+            logging.info("Extracted and cached new ATS keywords.")
+        except Exception as e:
+            logging.error(f"Error extracting ATS keywords: {e}", exc_info=True)
+            return {"score": 0, "matched_keywords": [], "missing_keywords": []}
 
-        matched_keywords = {kw for kw in keywords if kw.lower() in full_text.lower()}
-        missing_keywords = set(keywords) - matched_keywords
-        score = (len(matched_keywords) / len(keywords) * 100) if keywords else 0
+    matched_keywords = {kw for kw in keywords if kw.lower() in full_text.lower()}
+    missing_keywords = set(keywords) - matched_keywords
+    score = (len(matched_keywords) / len(keywords) * 100) if keywords else 0
 
-        logging.info(f"ATS simulation complete. Score: {score:.2f}%")
-        return {
-            "score": round(score, 2),
-            "matched_keywords": list(matched_keywords),
-            "missing_keywords": list(missing_keywords)
-        }
-    except Exception as e:
-        logging.error(f"Error during ATS simulation: {e}", exc_info=True)
-        return {"score": 0, "matched_keywords": [], "missing_keywords": []}
+    logging.info(f"ATS simulation complete. Score: {score:.2f}%")
+    return {
+        "score": round(score, 2),
+        "matched_keywords": list(matched_keywords),
+        "missing_keywords": list(missing_keywords)
+    }
+
 
 def validate_materials_with_gemini(materials):
     """Uses Gemini to validate the completeness and quality of application materials."""
@@ -398,7 +411,7 @@ def validate_materials_with_gemini(materials):
         ---
 
         Return a JSON object with a single key "validation_feedback", which is a list of strings.
-        Example: {"validation_feedback": ["The cover letter could be more specific about project X.", "Consider rephrasing the second resume suggestion for more impact."]}
+        Example: {{"validation_feedback": ["The cover letter could be more specific about project X.", "Consider rephrasing the second resume suggestion for more impact."]}}
         """
         response = model.generate_content(prompt)
         cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
@@ -452,7 +465,7 @@ def apply_validation_feedback(materials, validation_feedback):
         {json.dumps(validation_feedback, indent=2)}
         ---
 
-        Revise the "cover_letter" and "refined_resume" to address all the feedback points. Make sure the revisions improve clarity, impact, professionalism, and incorporate any suggestions.
+        Revise the "cover_letter" and "refined_resume" to address all the feedback points. Make sure the revisions improve clarity, impact, professionalism, and incorporate any suggestions. While revising, ensure the content remains optimized for ATS by incorporating key job description keywords without keyword stuffing.
 
         Return a JSON object with keys "cover_letter" and "refined_resume", containing the revised texts.
         """
@@ -472,7 +485,7 @@ def generate_refined_resume(profile, materials, job_data):
     """Uses Gemini to generate a refined resume based on profile and suggestions."""
     suggestions = materials.get('resume_suggestions', [])
     job_description = job_data.get('job_details', {}).get('full_description', '')
-    job_title = job_data.get('job_details', {}).get('title', 'N/A')
+    job_title = job_data.get('job_details', {}).get('title', '')
     
     logging.info(f"Generating refined resume for: {job_title}")
     
@@ -495,6 +508,13 @@ def generate_refined_resume(profile, materials, job_data):
         ---
 
         Task: Create a professional resume based on the applicant profile. Generate the body content only—do not include any headers, personal names, contact details (phone, email, LinkedIn), or location information, as these will be added separately. Incorporate all the provided suggestions. Tailor it specifically to the job description, highlighting relevant skills and experiences. Ensure the resume is professional, concise, and optimized for ATS systems by including keywords from the job description.
+        
+        Use the following formatting guidelines:
+        - Use `##` for main section headings (e.g., `## Summary`, `## Experience`, `## Education`, `## Skills`).
+        - For job/education entries, use the format `**Job Title, Company** (Dates)` or `**Degree, Institution** (Dates)`. Ensure the dates are enclosed in parentheses and italicized.
+        - Use `- ` or `* ` for bullet points.
+        - For skills lists, provide them as a comma-separated list if there are many, or as bullet points if there are fewer than 4.
+        - Use `**bold**` and `*italic*` for emphasis where appropriate.
         
         Return only the full text of the resume, without any additional explanations or formatting.
         """
@@ -666,7 +686,7 @@ def evaluate_job_fit(job, user_profile):
     found_skills = {skill for skill in user_skills if skill in job_description.lower()}
     skill_match_percentage = (len(found_skills) / len(user_skills) * 100) if user_skills else 0
 
-    logging.info(f"Calling Gemini to evaluate job fit for: {job.get('title')}")
+    logging.info(f"Calling Gemini to evaluate job fit for: {job.get('title', '')}")
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
@@ -688,7 +708,7 @@ def evaluate_job_fit(job, user_profile):
         evaluation['skill_match_percentage'] = round(skill_match_percentage, 2)
         evaluation['matched_skills'] = list(found_skills)
         
-        logging.info(f"Successfully evaluated job fit for: {job.get('title')}")
+        logging.info(f"Successfully evaluated job fit for: {job.get('title', '')}")
         return evaluation
     except google_exceptions.ResourceExhausted as e:
         logging.error(f"Gemini API quota exceeded while evaluating job fit: {e}", exc_info=True)
@@ -746,8 +766,8 @@ def search():
         if new_jobs:
             logging.info(f"Found {len(new_jobs)} new jobs to evaluate.")
             for job in new_jobs:
-                title = job.get('title', 'N/A')
-                company = job.get('company', {}).get('display_name', 'N/A')
+                title = job.get('title', '')
+                company = job.get('company', {}).get('display_name', '')
                 logging.info(f"--- Evaluating: {title} at {company} ---")
                 
                 evaluation = evaluate_job_fit(job, profile)
@@ -788,8 +808,8 @@ def review():
         evaluation = job_data.get('evaluation', {})
 
         click.echo("\n" + "-"*80)
-        click.echo(f"Title: {job_details.get('title')}")
-        click.echo(f"Company: {job_details.get('company', {}).get('display_name')}")
+        click.echo(f"Title: {job_details.get('title', '')}")
+        click.echo(f"Company: {job_details.get('company', {}).get('display_name', '')}")
         click.echo(f"Fit Score: {evaluation.get('fit_score')}/10 | Skill Match: {evaluation.get('skill_match_percentage')}% ")
         click.echo(f"Summary: {evaluation.get('summary')}")
         click.echo("-"*80)
@@ -798,9 +818,9 @@ def review():
 
         if choice == 'i':
             selected_jobs.append(job_data)
-            logging.info(f"Marked as interested: {job_details.get('title')}")
+            logging.info(f"Marked as interested: {job_details.get('title', '')}")
         elif choice == 'n':
-            logging.info(f"Marked as not interested: {job_details.get('title')}.")
+            logging.info(f"Marked as not interested: {job_details.get('title', '')}.")
         else:
             keep_jobs.append(job_data)
 
@@ -822,7 +842,7 @@ def generate():
     all_generated_materials = []
     
     for job_data in selected_jobs:
-        job_title = job_data.get('job_details', {}).get('title', 'N/A')
+        job_title = job_data.get('job_details', {}).get('title', '')
         click.echo("\n" + "="*80)
         click.echo(f"Preparing to generate materials for: {job_title}")
         click.echo("="*80)
@@ -859,7 +879,7 @@ def refine():
         job_details = item.get('job_details', {})
         materials = item.get('generated_materials', {}).copy() # Use a copy to edit
         job_data = item  # For refined resume
-        job_title = job_details.get('title', 'N/A')
+        job_title = job_details.get('title', '')
 
         click.echo(f"Refining {job_title}...")
 
@@ -868,7 +888,7 @@ def refine():
         materials['refined_resume'] = refined_resume
 
         # Simulate ATS
-        ats_results = simulate_ats_score(job_details, materials)
+        ats_results = simulate_ats_score(item, materials)
         item['ats_score'] = ats_results
 
         # Validate
@@ -878,7 +898,7 @@ def refine():
         materials = apply_validation_feedback(materials, validation_feedback)
 
         # Re-simulate ATS after revision
-        ats_results = simulate_ats_score(job_details, materials)
+        ats_results = simulate_ats_score(item, materials)
         item['ats_score'] = ats_results
 
         item['generated_materials'] = materials
@@ -892,57 +912,177 @@ def refine():
 
 
 def add_styled_text(paragraph, text):
-    """Parses text for **bold** and *italic*, adding styled runs."""
-    # Split on Markdown markers without capturing them in groups
-    parts = re.split(r'(\**.*?\**|\*.*?\*)', text)
-    for part in parts:
-        if part.startswith('**') and part.endswith('**'):
-            run = paragraph.add_run(part[2:-2])
-            run.bold = True
-        elif part.startswith('*') and part.endswith('*'):
-            run = paragraph.add_run(part[1:-1])
-            run.italic = True
+    """Manually parses text for **bold** and *italic*, skipping unclosed markers."""
+    i = 0
+    while i < len(text):
+        if text[i:i+2] == '**':
+            # Look for closing **
+            j = text.find('**', i + 2)
+            if j != -1:
+                # Add bold run for content between
+                run = paragraph.add_run(text[i + 2:j])
+                run.bold = True
+                run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+                i = j + 2
+            else:
+                # Unclosed **, skip the marker to remove it
+                i += 2
+        elif text[i] == '*':
+            # Look for closing *
+            j = text.find('*', i + 1)
+            if j != -1:
+                # Add italic run for content between
+                run = paragraph.add_run(text[i + 1:j])
+                run.italic = True
+                run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+                i = j + 1
+            else:
+                # Unclosed *, skip the marker
+                i += 1
         else:
-            paragraph.add_run(part)
+            # Add plain text until next marker
+            next_bold = text.find('**', i)
+            next_italic = text.find('*', i)
+            next_mark = min(next_bold if next_bold != -1 else len(text),
+                            next_italic if next_italic != -1 else len(text))
+            run = paragraph.add_run(text[i:next_mark])
+            run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+            i = next_mark
 
 def add_formatted_content(doc, content, is_resume=False):
-    """Adds content to DOCX with native formatting, parsing Markdown and structure."""
+    """Adds content to DOCX with native formatting, parsing Markdown and resume structure."""
+    import re  # Ensure re is imported at the top of the script if not already
+
     lines = content.split('\n')
-    for line in lines:
-        line = line.strip()
+    i = 0
+    is_skills = False
+    while i < len(lines):
+        line = lines[i].strip()
         if not line:
-            continue  # Skip empty lines
+            i += 1
+            continue
+        # Markdown headings
         if line.startswith('# '):
             heading = doc.add_heading(line[2:], level=1)
-            heading.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT if is_resume else WD_PARAGRAPH_ALIGNMENT.CENTER
+            heading.paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+            for run in heading.runs:
+                run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+            is_skills = False
+            i += 1
+            continue
         elif line.startswith('## '):
-            heading = doc.add_heading(line[3:], level=2)
+            heading_text = line[3:]
+            heading = doc.add_heading(heading_text, level=2)
+            heading.paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+            for run in heading.runs:
+                run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+            is_skills = (heading_text == 'Skills')
+            i += 1
+            continue
         elif line.startswith('### '):
             heading = doc.add_heading(line[4:], level=3)
+            heading.paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+            for run in heading.runs:
+                run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+            is_skills = False
+            i += 1
+            continue
+        # Job/education entries
+        if is_resume and '(' in line and ')' in line and line.endswith(')'):
+            date_start = line.rfind('(')
+            title_part = line[:date_start].strip()
+            date_part = line[date_start:].strip()
+            p = doc.add_paragraph()
+            add_styled_text(p, title_part)
+            p.add_run(' ')
+            run = p.add_run(date_part)
+            run.italic = True
+            run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+            i += 1
+            continue
+        # Bullets
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
-            add_styled_text(p, line[2:])
-        elif is_resume and ':' in line:  # Common in resumes, e.g., "Skills: Python, SQL"
-            p = doc.add_paragraph()
-            parts = line.split(':', 1)
-            run = p.add_run(parts[0] + ': ')
-            run.bold = True
-            add_styled_text(p, parts[1].strip())
-        else:
-            p = doc.add_paragraph()
-            add_styled_text(p, line)
+            add_styled_text(p, line[2:].strip())
+            i += 1
+            continue
+        # Skills subheadings and grouped items
+        elif is_resume and is_skills:
+            clean_line = re.sub(r'\*', '', line).strip()
+            if clean_line.endswith(':'):
+                # Add subheading
+                p = doc.add_paragraph()
+                add_styled_text(p, line)
+                i += 1
+                # Collect items for comma-separated list
+                items = []
+                while i < len(lines):
+                    next_line = lines[i].strip()
+                    if not next_line:
+                        i += 1
+                        continue
+                    clean_next = re.sub(r'\*', '', next_line).strip()
+                    if clean_next.endswith(':') or next_line.startswith('#') or next_line.startswith('- ') or next_line.startswith('* ') or next_line.endswith(')') or '.' in next_line:
+                        break
+                    if len(next_line) < 60:  # Likely a skill item
+                        items.append(next_line)
+                    i += 1
+                if items:
+                    joined = ', '.join([item.strip() for item in items if item.strip()])
+                    p = doc.add_paragraph()
+                    add_styled_text(p, joined)
+                continue
+        # Default paragraph
+        p = doc.add_paragraph()
+        add_styled_text(p, line)
+        i += 1
 
 def set_document_styles(doc):
     """Sets professional document-wide styles."""
     normal_style = doc.styles['Normal']
     normal_style.font.name = 'Calibri'  # Or 'Arial'
     normal_style.font.size = Pt(11)
+    normal_style.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+    
+    # Force black for headings
+    for i in range(1, 10):
+        heading_style = doc.styles[f'Heading {i}']
+        heading_style.font.color.rgb = RGBColor(0, 0, 0)
     
     section = doc.sections[0]
     section.top_margin = Inches(0.5)
     section.bottom_margin = Inches(0.5)
     section.left_margin = Inches(0.75)
     section.right_margin = Inches(0.75)
+
+def add_styled_header(doc, header_text, is_resume=False):
+    """Adds a formatted header with name as heading, contact smaller."""
+    lines = header_text.split('\n')
+    
+    if lines:  # Name as heading
+        name_heading = doc.add_heading(lines[0], level=1)
+        name_heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER if is_resume else WD_PARAGRAPH_ALIGNMENT.LEFT
+        for run in name_heading.runs:
+            run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+    
+    if len(lines) > 1:  # Contact line
+        contact_p = doc.add_paragraph()
+        contact_p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER if is_resume else WD_PARAGRAPH_ALIGNMENT.LEFT
+        contact_parts = lines[1].split(' | ')
+        for i, part in enumerate(contact_parts):
+            run = contact_p.add_run(part.strip())
+            if 'http' in part or 'linkedin' in part.lower():  # Italicize links
+                run.italic = True
+            run.font.size = Pt(10)
+            run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
+            if i < len(contact_parts) - 1:
+                contact_p.add_run(' | ')
+    
+    # Optional: Add a thin separator line
+    separator_p = doc.add_paragraph('___________________________________________')
+    separator_p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    for run in separator_p.runs:
+        run.font.color.rgb = RGBColor(0, 0, 0)  # Force black
 
 @cli.command()
 def export_docs():
@@ -974,24 +1114,35 @@ def export_docs():
     for item in approved_materials:
         job_details = item.get('job_details', {})
         materials = item.get('generated_materials', {})
-        company = job_details.get('company', {}).get('display_name', 'N_A').replace(' ', '_').replace('/', '_')
-        title = job_details.get('title', 'N_A').replace(' ', '_').replace('/', '_')
+        company = job_details.get('company', {}).get('display_name', 'N/A').replace(' ', '_').replace('/', '_')
+        title = job_details.get('title', 'N/A').replace(' ', '_').replace('/', '_')
 
         # --- Export Cover Letter ---
         cover_letter_doc = docx.Document()
         set_document_styles(cover_letter_doc)
         
-        # Add header (left-aligned for cover letters)
-        header_p = cover_letter_doc.add_paragraph(header_text)
-        header_p.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        # Add styled header (left-aligned for cover letters)
+        add_styled_header(cover_letter_doc, header_text)
         
-        # Add job/company info as headings
-        cover_letter_doc.add_heading(job_details.get('title', 'N/A'), level=1)
-        cover_letter_doc.add_heading(f"Company: {job_details.get('company', {}).get('display_name')}", level=2)
+        # Add salutation
+        salutation_p = cover_letter_doc.add_paragraph()
+        add_styled_text(salutation_p, f"Dear hiring manager at {job_details.get('company', {}).get('display_name', 'N/A')},")
         
         # Add formatted cover letter body
         cover_letter_content = materials.get('cover_letter', 'Not generated.')
         add_formatted_content(cover_letter_doc, cover_letter_content)
+        
+        # Add closing
+        closing_p = cover_letter_doc.add_paragraph()
+        add_styled_text(closing_p, "Regards,")
+        
+        # Add two line breaks (empty paragraphs)
+        cover_letter_doc.add_paragraph()
+        cover_letter_doc.add_paragraph()
+        
+        # Add candidate name
+        name_p = cover_letter_doc.add_paragraph()
+        add_styled_text(name_p, name)
         
         cover_letter_path = os.path.join(output_dir, f"{company}_{title}_CoverLetter.docx")
         cover_letter_doc.save(cover_letter_path)
@@ -1001,11 +1152,8 @@ def export_docs():
         resume_doc = docx.Document()
         set_document_styles(resume_doc)
         
-        # Add header (center-aligned for resumes)
-        header_p = resume_doc.add_paragraph(header_text)
-        header_p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        for run in header_p.runs:
-            run.font.size = Pt(12)  # Slightly larger for header
+        # Add styled header (center-aligned for resumes)
+        add_styled_header(resume_doc, header_text, is_resume=True)
         
         # Add formatted resume body (with resume-specific parsing)
         resume_content = materials.get('refined_resume', 'Not generated.')
@@ -1091,7 +1239,7 @@ def manual_update(skill, location, industry, work_type, salary_range):
 def generate_key():
     """Generates a new encryption key and prints it."""
     key = Fernet.generate_key()
-    click.echo("Generated Encryption Key (add this to your .env file):")
+    click.echo("Generated Encryption Key (add this to your .env file):\n")
     click.echo(f"ENCRYPTION_KEY={key.decode()}")
 
 if __name__ == "__main__":
