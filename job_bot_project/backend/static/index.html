@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Bot Dashboard</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { font-size: 22px; }
+        #job-matches { margin-top: 20px; }
+        .job { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Welcome to Your Job Bot Dashboard</h1>
+    <button id="logoutButton" style="position: absolute; top: 20px; right: 20px;">Logout</button>
+    
+    <div>
+        <h2>Upload Your CV</h2>
+        <input type="file" id="cvFile" accept=".pdf,.docx">
+        <button id="uploadButton">Upload</button>
+        <p id="uploadStatus"></p>
+    </div>
+
+    <div id="job-matches">
+        <h2>Job Matches</h2>
+        <button id="runJobMatchingButton">Run Job Matching</button>
+        <p id="jobMatchingStatus"></p>
+        <div id="job-list">
+            <!-- Job matches will be loaded here -->
+        </div>
+    </div>
+
+    <script src="/static/auth.js"></script>
+</body>
+</html>

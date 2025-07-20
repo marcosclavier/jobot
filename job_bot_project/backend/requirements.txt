@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+motor
+pydantic
+passlib
+python-jose
+python-dotenv
+google-generativeai
+PyPDF2
+docx
+requests
+beautifulsoup4

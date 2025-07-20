@@ -1,0 +1,19 @@
+# This file lists the Python packages required for the project.
+
+requests
+beautifulsoup4
+selenium
+undetected-chromedriver
+selenium-wire
+google-generativeai
+weasyprint
+reportlab
+python-dotenv
+schedule
+2captcha-python
+click
+PyPDF2
+python-docx
+cryptography
+pytest
+pandas

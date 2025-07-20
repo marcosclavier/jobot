@@ -1,3 +1,5 @@
+
+
 """
 Job Application Automation Bot
 
@@ -29,12 +31,11 @@ from google.api_core import exceptions as google_exceptions
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
+
+
 from docx.shared import Pt, Inches
 import re
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-
-# Import submission logic from separate module
-import submission
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO,
@@ -69,17 +70,32 @@ def load_key():
         raise ValueError("Encryption key not found.")
     return key.encode()
 
-def encrypt_data(data: bytes, key):
+def encrypt_data(data, key):
     """Encrypts data using the provided key."""
     f = Fernet(key)
-    return f.encrypt(data)
+    return f.encrypt(data.encode())
 
 def decrypt_data(encrypted_data, key):
     """Decrypts data using the provided key."""
     f = Fernet(key)
     return f.decrypt(encrypted_data).decode()
 
-from file_utils import load_json_file, save_json_file, load_profile
+# --- Profile Management ---
+def load_profile():
+    """Loads and decrypts the user profile."""
+    try:
+        with open(PROFILE_FILE, 'rb') as f:
+            encrypted_data = f.read()
+        if not encrypted_data:
+            return {}
+        key = load_key()
+        decrypted_json = decrypt_data(encrypted_data, key)
+        return json.loads(decrypted_json)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logging.error(f"Failed to load or decrypt profile: {e}", exc_info=True)
+        return {}
 
 def save_profile(profile_data):
     """Encrypts and saves the user profile. Returns True on success, False on failure."""
@@ -214,7 +230,7 @@ def enhance_profile_with_gemini(resume_text):
         Example JSON output:
         {{
           "name": "John Doe",
-          "contact_info": {{"phone": "123-456-7890", "email": "john@example.com", "linkedin": "linkedin.com/in/johndoe"}},
+          "contact_info": {"phone": "123-456-7890", "email": "john@example.com", "linkedin": "linkedin.com/in/johndoe"},
           "enhanced_skills": ["Python", "Data Analysis", "Machine Learning", "SQL"],
           "experience_summary": "A data scientist with 5 years of experience...",
           "suggested_keywords": ["Data Scientist", "Python Developer", "AI Engineer"],
@@ -513,7 +529,24 @@ def generate_refined_resume(profile, materials, job_data):
         logging.error(f"Error generating refined resume for {job_title}: {e}", exc_info=True)
         return "Failed to generate refined resume."
 
+# --- Job Search & File Management ---
+def load_json_file(file_path):
+    """Loads data from a JSON file."""
+    if not os.path.exists(file_path):
+        return []
+    try:
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
+def save_json_file(data, file_path):
+    """Saves data to a JSON file."""
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+    except IOError as e:
+        logging.error(f"Error writing to {file_path}: {e}", exc_info=True)
 
 def save_recommended_job(job_data):
     recommendations = load_json_file(RECOMMENDED_JOBS_FILE)
@@ -529,16 +562,13 @@ def filter_new_jobs(jobs, seen_job_ids):
     """Filters out jobs that have already been seen."""
     return [job for job in jobs if job.get('id') and job.get('id') not in seen_job_ids]
 
-import re  # Already imported, but ensure for regex
-
 def scrape_full_description(job):
+    """Scrapes the full job description from the redirect URL."""
     redirect_url = job.get('redirect_url')
     original_description = job.get('description', '')
 
     if not redirect_url:
         job['full_description'] = original_description
-        job['ats_url'] = None
-        job['ats_platform'] = 'Unknown'
         return job
 
     session = requests.Session()
@@ -553,55 +583,19 @@ def scrape_full_description(job):
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
+            'DNT': '1', # Do Not Track
             'Upgrade-Insecure-Requests': '1'
         }
         page_response = session.get(redirect_url, headers=headers, timeout=15)
         page_response.raise_for_status()
         soup = BeautifulSoup(page_response.text, 'html.parser')
         
-        # Existing description scraping
         description_div = soup.find('section', class_='adp-body') or soup.find('div', class_='job-description')
         job['full_description'] = description_div.get_text(separator='\n', strip=True) if description_div else original_description
-        
-        # New: Scrape Apply URL
-        apply_a = soup.find('a', attrs={'data-js': 'apply'})  # Primary matcher from your snippet
-        if not apply_a:
-            # Fallback: Search by text or class
-            apply_a = soup.find('a', string=re.compile('Apply for this job', re.I)) or \
-                      soup.find('a', class_=re.compile('adzuna-green'))
-        
-        if apply_a:
-            apply_href = apply_a['href']
-            if apply_href.startswith('/'):  # Relative URL
-                apply_href = 'https://www.adzuna.com' + apply_href
-            
-            # Follow redirects to get final ATS URL
-            apply_response = session.get(apply_href, headers=headers, allow_redirects=True, timeout=15)
-            final_url = apply_response.url
-            job['ats_url'] = final_url
-            
-            # Detect ATS platform
-            if 'greenhouse.io' in final_url:
-                job['ats_platform'] = 'Greenhouse'
-            elif 'lever.co' in final_url:
-                job['ats_platform'] = 'Lever'
-            elif 'bamboohr.com' in final_url:
-                job['ats_platform'] = 'BambooHR'
-            # Add more (e.g., 'workable.com': 'Workable', 'ashbyhq.com': 'Ashby')
-            else:
-                job['ats_platform'] = 'Unknown'
-            logging.info(f"Scraped ATS URL: {final_url} ({job['ats_platform']})")
-        else:
-            job['ats_url'] = None
-            job['ats_platform'] = 'Unknown'
-            logging.warning("No Apply button found on page.")
     
     except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to fetch or process {redirect_url}: {e}")
+        logging.error(f"Failed to fetch {redirect_url}: {e}", exc_info=True)
         job['full_description'] = original_description
-        job['ats_url'] = None
-        job['ats_platform'] = 'Unknown'
         
     return job
 
@@ -633,8 +627,6 @@ def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
             response.raise_for_status()
             data = response.json()
             jobs = data.get('results', [])
-            for job in jobs:
-                job['source'] = 'adzuna'
             all_jobs.extend(jobs)
             if len(jobs) < params['results_per_page']:
                 break
@@ -674,15 +666,13 @@ def fetch_indeed_jobs(profile, keywords):
         response.raise_for_status()
         data = response.json()
         for item in data.get('results', []):
-            job = {
+            all_jobs.append({
                 'id': item.get('jobkey'),
                 'title': item.get('jobtitle'),
                 'description': item.get('snippet'),
                 'redirect_url': item.get('url'),
-                'company': {'display_name': item.get('company')},
-                'source': 'indeed'
-            }
-            all_jobs.append(job)
+                'company': {'display_name': item.get('company')}
+            })
     except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
         logging.error(f"Error fetching from Indeed: {e}", exc_info=True)
 
@@ -1107,22 +1097,19 @@ def export_docs():
     os.makedirs(output_dir, exist_ok=True)
 
     profile = load_profile()
-    name = profile.get('name', '')
+    name = profile.get('name', 'Applicant Name')
     contact_info = profile.get('contact_info', {})
-    location = profile.get('location', '')
+    location = profile.get('location', 'N/A')
 
     # Construct the personal information header
     header_text = f"{name}\n"
-    contact_parts = []
     if contact_info.get('phone'):
-        contact_parts.append(contact_info['phone'])
+        header_text += f"{contact_info['phone']} | "
     if contact_info.get('email'):
-        contact_parts.append(contact_info['email'])
+        header_text += f"{contact_info['email']} | "
     if contact_info.get('linkedin'):
-        contact_parts.append(contact_info['linkedin'])
-    header_text += " | ".join(contact_parts)
-    if location:
-        header_text += f"\n{location}"
+        header_text += f"{contact_info['linkedin']} | "
+    header_text = header_text.rstrip(' | ') + f"\n{location}"
 
     for item in approved_materials:
         job_details = item.get('job_details', {})
@@ -1142,7 +1129,7 @@ def export_docs():
         add_styled_text(salutation_p, f"Dear hiring manager at {job_details.get('company', {}).get('display_name', 'N/A')},")
         
         # Add formatted cover letter body
-        cover_letter_content = materials.get('cover_letter', '')
+        cover_letter_content = materials.get('cover_letter', 'Not generated.')
         add_formatted_content(cover_letter_doc, cover_letter_content)
         
         # Add closing
@@ -1169,7 +1156,7 @@ def export_docs():
         add_styled_header(resume_doc, header_text, is_resume=True)
         
         # Add formatted resume body (with resume-specific parsing)
-        resume_content = materials.get('refined_resume', '')
+        resume_content = materials.get('refined_resume', 'Not generated.')
         add_formatted_content(resume_doc, resume_content, is_resume=True)
         
         resume_path = os.path.join(output_dir, f"{company}_{title}_Resume.docx")
@@ -1186,35 +1173,6 @@ def export_docs():
             logging.info(f"No questions and answers to export for {company}_{title}.")
 
     click.echo(f"Successfully exported materials for {len(approved_materials)} jobs to the 'applications' folder.")
-
-@cli.command()
-def submit():
-    """Submits approved application materials with user confirmation."""
-    approved_materials = load_json_file(EDITED_MATERIALS_FILE)
-    if not approved_materials:
-        click.echo("No approved materials to submit. Run `export-docs` first.")
-        logging.info("No approved materials to submit.")
-        return
-
-    for item in approved_materials:
-        job_details = item.get('job_details', {})
-        job_title = job_details.get('title', 'Unknown')
-        company = job_details.get('company', {}).get('display_name', 'Unknown')
-
-        click.echo(f"\n--- Job: {job_title} at {company} ---")
-        confirm = click.confirm("Confirm submission? (This will send a mock email with attachments)", default=False)
-
-        if confirm:
-            success, message = submission.submit_application(item)
-            if success:
-                click.echo(f"Submission successful for {job_title}: {message}")
-                logging.info(f"Submitted successfully: {job_title}")
-            else:
-                click.echo(f"Submission failed for {job_title}: {message}")
-                logging.error(f"Submission failed for {job_title}: {message}")
-        else:
-            click.echo(f"Skipped submission for {job_title}")
-            logging.info(f"Skipped submission for {job_title}")
 
 @cli.command()
 @click.argument('resume_path', type=click.Path(exists=True))

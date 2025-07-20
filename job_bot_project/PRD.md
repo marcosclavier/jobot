@@ -1,114 +1,97 @@
-# Product Requirements Document: Job Application Automation Bot
+# Product Requirements Document: Job Bot Application System
 
 ## 1. Introduction
+This document outlines the requirements for the Job Bot application system, a comprehensive tool designed to assist users in their job application process. The system comprises a web portal, a FastAPI backend, and a Chrome extension, integrating AI-powered resume parsing, profile enhancement, job matching, and on-demand document generation.
 
-### 1.1 Purpose
-This document outlines the requirements for the Job Application Automation Bot, a command-line interface (CLI) tool designed to streamline and automate the job search and application process for users. The bot leverages AI (specifically Google Gemini) to enhance user profiles, evaluate job fit, and generate tailored application materials, significantly reducing the manual effort involved in job applications.
+## 2. Goals
+The primary goal of the Job Bot system is to provide a sophisticated, user-friendly, and efficient platform for job seekers to manage their applications, optimize their profiles, and generate tailored application materials.
 
-### 1.2 Goals
-*   **Automate Job Discovery:** Efficiently find relevant job postings from multiple sources.
-*   **Personalize Applications:** Generate highly customized application materials (cover letters, resumes, Q&A) based on user profiles and specific job descriptions.
-*   **Optimize for ATS:** Improve the chances of applications passing Applicant Tracking Systems (ATS) through AI-driven keyword matching and material refinement.
-*   **Simplify Profile Management:** Provide tools for users to easily manage and enhance their professional profiles.
-*   **User-Friendly Interface:** Offer a straightforward CLI for all bot operations.
+## 3. Key Features & Phases
+The development of the Job Bot system will proceed in four major phases:
 
-## 2. Features
+### Phase 1: Web Portal and Backend Foundation
+This phase focuses on establishing the core web application and user management system.
 
-### 2.1 User Profile Management
-*   **Profile Creation/Loading:** Load and save encrypted user profiles (`profile.json`).
-*   **Resume Parsing:** Extract text from PDF and DOCX resume files.
-*   **AI-Powered Profile Enhancement:** Utilize Gemini to analyze resume text and enrich the user's profile with:
-    *   Name, contact information (phone, email, LinkedIn)
-    *   Enhanced skills list
-    *   Professional experience summary
-    *   Suggested job search keywords
-    *   Suggested salary range
-*   **Manual Profile Update:** Allow users to manually add/update skills, location, industry, work type, and salary range.
-*   **Profile Change Detection:** Monitor `profile.json` for changes to trigger re-evaluation of seen jobs.
-*   **Data Encryption:** Encrypt sensitive user profile data for security.
+**3.1. Backend API (FastAPI) Expansion:**
+*   **User Authentication:** Implement user registration and login with JWT-based authentication.
+    *   `POST /api/register`: Endpoint for new user account creation. (Implemented in `main.py`)
+    *   `POST /api/login`: Endpoint for user authentication, returning an access token. (Implemented in `main.py`)
+*   **CV Upload Endpoint:**
+    *   `POST /api/cv-upload`: Endpoint to accept CV file uploads. (Implemented in `main.py`)
 
-### 2.2 Job Search and Evaluation
-*   **Multi-Source Job Fetching:** Integrate with job boards (e.g., Adzuna, Indeed) to fetch job listings.
-*   **Keyword Expansion:** Use Gemini to expand user-defined skills into a broader set of job search keywords.
-*   **Job Filtering:** Filter out already "seen" jobs to avoid duplicates.
-*   **Full Description Scraping:** Scrape full job descriptions from redirect URLs for comprehensive analysis.
-*   **AI-Powered Job Fit Evaluation:** Employ Gemini to assess job fit based on user profile and job description, providing:
-    *   A fit score (1-10)
-    *   An explanation for the score
-    *   A concise summary of the job role
-    *   Skill match percentage and matched/missing keywords (ATS simulation)
-*   **Job Recommendation System:** Recommend jobs with a fit score of 7 or higher.
-*   **Interactive Job Review:** Allow users to review recommended jobs and mark them as "Interested," "Not Interested," or "Save for later."
+**3.2. Frontend Web Portal Development:**
+*   **User Interface:** Simple HTML pages for:
+    *   Registration page (`register.html`)
+    *   Login page (`login.html`)
+    *   Main dashboard page for CV upload (`index.html`)
+*   **Client-Side Logic:** JavaScript to handle form submissions and interact with the backend API.
 
-### 2.3 Application Material Generation and Refinement
-*   **AI-Powered Material Generation:** Generate tailored application materials using Gemini:
-    *   Customized cover letters (body content only, personal info added separately)
-    *   Specific, actionable resume adjustment suggestions
-    *   Answers to potential application questions extracted from job descriptions
-*   **Refined Resume Generation:** Create a full, professional resume based on the user's profile and AI-generated suggestions, formatted for ATS optimization.
-*   **Material Validation and Feedback:** Use Gemini to validate generated materials for completeness, quality, and professionalism, providing actionable suggestions for improvement.
-*   **Automated Feedback Application:** Automatically apply Gemini's validation feedback to refine generated materials.
-*   **ATS Score Simulation:** Re-evaluate ATS compatibility after material refinement.
+**3.3. CV Parsing Integration:**
+*   Upon CV upload to `/api/cv-upload`, the backend will trigger `parse_resume` and `enhance_profile_with_gemini` functions.
+*   Extracted and enhanced profile data will be saved to the MongoDB database (`profiles_collection`), associated with the user's account.
 
-### 2.4 Export and Output
-*   **DOCX Export:** Export generated cover letters and refined resumes as professional DOCX files.
-*   **JSON Export:** Export question-and-answer sets as JSON files.
-*   **Organized Output:** Save all generated application materials into a dedicated `applications` folder, named logically by company and job title.
+### Phase 2: Job Matching and Portal Dashboard
+This phase integrates job matching capabilities and enhances the user dashboard.
 
-### 2.5 Command-Line Interface (CLI)
-*   **Intuitive Commands:** Provide clear and concise CLI commands for all functionalities (e.g., `search`, `review`, `generate`, `refine`, `export-docs`, `update-profile`, `manual-update`, `generate-key`).
-*   **Logging:** Comprehensive logging for all operations to `job_bot.log`.
+**3.4. Job Matching Logic Adaptation:**
+*   The existing job matching logic (e.g., `run_job_matching_for_all_users` from `job_matching_service.py`) will be integrated as a backend service.
+*   This service will periodically run for each user, identify job matches based on their profile, and store these matches in the database (`recommended_jobs_collection`).
 
-## 3. User Stories
+**3.5. New API Endpoints for Job Management:**
+*   `GET /api/matches`: To fetch a list of matched jobs for the logged-in user.
+*   `POST /api/matches/{job_id}/apply`: To record a user's intent to apply and return the direct URL to the job application page.
+*   `DELETE /api/matches/{job_id}`: To remove a job match from the user's dashboard.
 
-*   As a **job seeker**, I want to **automatically find relevant job postings** so I don't have to manually browse multiple job boards.
-*   As a **job seeker**, I want the bot to **tailor my application materials** to each job so my applications stand out.
-*   As a **job seeker**, I want my **resume and cover letter to be ATS-friendly** so they pass initial screening.
-*   As a **job seeker**, I want to **easily update my professional profile** using my resume or manual input.
-*   As a **job seeker**, I want to **review and approve generated materials** before sending them out.
-*   As a **job seeker**, I want to **export my application documents** in standard formats (DOCX, JSON) for easy submission.
-*   As a **security-conscious user**, I want my **personal profile data to be encrypted** when stored.
+**3.6. Enhanced Portal Dashboard:**
+*   The dashboard will display matched jobs fetched from `/api/matches`.
+*   Each job listing will include an "Apply" button (opening the application page in a new tab) and a "Remove" button.
 
-## 4. Technical Considerations
+### Phase 3: Chrome Extension Overhaul
+This phase reconfigures the Chrome extension to interact with the new backend.
 
-### 4.1 Architecture
-*   **Python-based CLI:** Core application developed in Python using `click` for the CLI.
-*   **Modular Design:** Separation of concerns into modules (e.g., `api_clients.py`, `profile_manager.py`, `resume_parser.py`, `gemini_services.py`, `file_utils.py`, `encryption_utils.py`, `config.py`).
-*   **External APIs:** Integration with job board APIs (Adzuna, Indeed) and Google Gemini API.
-*   **Web Scraping:** Use `requests` and `BeautifulSoup` for scraping full job descriptions.
-*   **Document Generation:** Utilize `python-docx` for creating DOCX files.
-*   **Concurrency:** Employ `ThreadPoolExecutor` for parallel processing of job scraping.
+**3.7. Extension Authentication:**
+*   The extension's options page (`options.html`, `options.js`) will be updated to allow users to paste an authentication token obtained from the web portal, securely linking the extension to their account.
 
-### 4.2 Data Storage
-*   `profile.json`: Encrypted user profile data.
-*   `seen_jobs.json`: List of job IDs already processed.
-*   `recommended_jobs.json`: Jobs recommended by the bot for review.
-*   `selected_jobs.json`: Jobs selected by the user for material generation.
-*   `generated_materials.json`: Raw AI-generated application materials.
-*   `edited_materials.json`: Refined and approved application materials.
-*   `.profile_hash`: Stores a hash of `profile.json` for change detection.
-*   `job_bot.log`: Application logs.
+**3.8. Profile Data Fetching from API:**
+*   The `popup.js` script will be modified to make authenticated requests to a new backend endpoint (e.g., `GET /api/me/profile`) to retrieve user profile data directly from the database, replacing local storage.
 
-### 4.3 Dependencies
-*   `requests`: For HTTP requests to APIs and web scraping.
-*   `beautifulsoup4`: For parsing HTML content.
-*   `google-generativeai`: For interacting with Google Gemini API.
-*   `python-dotenv`: For managing environment variables (API keys, encryption key).
-*   `click`: For building the command-line interface.
-*   `PyPDF2`: For extracting text from PDF files.
-*   `python-docx`: For creating and manipulating DOCX files.
-*   `cryptography`: For data encryption/decryption.
-*   `schedule`: For scheduling automated tasks (if implemented).
-*   `pandas`: (Existing dependency, usage not explicitly clear from `main.py` but noted).
-*   `pytest`: For testing.
+### Phase 4: On-Demand Document Generation
+This final phase implements the dynamic generation of application documents.
 
-## 5. Future Enhancements
+**3.9. Document Generation API Endpoint:**
+*   `POST /api/jobs/{job_id}/generate-documents`: A new endpoint to generate tailored resumes and cover letters.
+*   This endpoint will utilize the user's profile and specific job details to call existing functions like `generate_refined_resume` and `generate_application_materials`.
+*   Generated documents (text content) will be returned directly in the API response.
 
-*   **Scheduled Runs:** Implement automated daily/weekly job searches using `schedule`.
-*   **Application Submission:** Develop functionality to automatically submit applications to job boards (requires careful consideration of anti-bot measures and user consent).
-*   **More Job Board Integrations:** Expand to other popular job platforms.
-*   **Advanced Profile Fields:** Allow users to define more nuanced preferences (e.g., company size, specific technologies to avoid).
-*   **UI/Dashboard:** Develop a web-based or desktop GUI for easier interaction and visualization of job search progress.
-*   **Feedback Loop for AI:** Implement a mechanism for users to provide feedback on AI-generated content to further refine future outputs.
-*   **Cover Letter/Resume Templates:** Allow users to select from different templates for generated documents.
-*   **Interview Preparation:** Add features for generating interview questions and practice responses based on job descriptions and user profiles.
+**3.10. Updated Extension "Fill Form" Logic:**
+*   When "Fill Form" is clicked on a job page, the extension will perform a two-step process:
+    1.  Call `/api/jobs/{job_id}/generate-documents` to get tailored CV and cover letter text.
+    2.  Proceed to fill the form using the user's profile data and the newly generated text.
+
+**3.11. Handling File Uploads (User Interaction Required):**
+*   **Constraint:** Due to browser security, the Chrome extension cannot programmatically select local files for upload fields.
+*   **Solution:** The extension will present the generated CV/Cover Letter text to the user (e.g., in a new tab or via copy-to-clipboard). The user will then manually save the text as a `.docx` or `.pdf` file and select it in the upload dialog.
+
+## 4. Technical Requirements
+
+*   **Backend Framework:** FastAPI (Python)
+*   **Database:** MongoDB (via `motor` for async operations)
+    *   Collections: `users`, `profiles`, `seen_jobs`, `recommended_jobs`
+*   **Authentication:** JWT (JSON Web Tokens) with `python-jose` and `passlib` for password hashing.
+*   **AI Integration:** Google Gemini API (`google-generativeai`)
+*   **Resume Parsing:** `resume_parser` module
+*   **Profile Enhancement:** `gemini_services` module
+*   **Job Matching:** `job_matching_service` module
+*   **Environment Management:** `.env` files for configuration (`python-dotenv`)
+*   **Logging:** Standard Python `logging` module
+*   **Frontend Technologies:** HTML, CSS, JavaScript
+*   **Chrome Extension Technologies:** HTML, CSS, JavaScript, `manifest.json`
+*   **Deployment (Inferred):** Docker/Docker Compose for containerization.
+
+## 5. Out of Scope / Future Considerations
+*   Automated file uploads for generated documents (due to browser security constraints).
+*   Advanced analytics or reporting features for job application success rates.
+*   Integration with third-party job boards beyond initial scraping (if any).
+*   Real-time job matching notifications.
+
+This PRD will serve as the guiding document for the development of the Job Bot application system.
