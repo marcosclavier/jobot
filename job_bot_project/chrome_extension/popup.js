@@ -3,10 +3,51 @@ document.addEventListener('DOMContentLoaded', () => {
   const optionsLink = document.getElementById('optionsLink');
 
   fillFormButton.addEventListener('click', () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      chrome.scripting.executeScript({
-        target: { tabId: tabs[0].id },
-        func: autoFillForm
+    // 1. Get auth token from storage
+    chrome.storage.local.get(['authToken'], (result) => {
+      const token = result.authToken;
+      if (!token) {
+        alert('Please log in first via the options page.');
+        chrome.runtime.openOptionsPage();
+        return;
+      }
+
+      // 2. Fetch profile from the API
+      fetch('http://127.0.0.1:8000/api/me/profile', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      .then(response => {
+        if (!response.ok) {
+          // If the token is invalid or expired, or another server error
+          if (response.status === 401) {
+             alert('Your session has expired. Please log in again.');
+             chrome.runtime.openOptionsPage();
+          }
+          throw new Error('API request failed');
+        }
+        return response.json();
+      })
+      .then(profileData => {
+        // 3. Cache the new data and fill the form
+        chrome.storage.local.set({ 'userProfile': profileData }, () => {
+          console.log('Profile fetched from API and cached.');
+          injectAutoFill(profileData);
+        });
+      })
+      .catch(error => {
+        console.error('Error fetching profile from API:', error);
+        // 4. If API fails, try to use cached data
+        console.log('Attempting to use cached profile data...');
+        chrome.storage.local.get(['userProfile'], (cacheResult) => {
+          if (cacheResult.userProfile) {
+            console.log('Using cached profile.');
+            injectAutoFill(cacheResult.userProfile);
+          } else {
+            alert('Could not fetch your profile. Please check your internet connection and try logging in again.');
+          }
+        });
       });
     });
   });
@@ -16,38 +57,62 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-function autoFillForm() {
-  chrome.storage.local.get(['appData'], (result) => {
-    const data = result.appData;
-    if (!data) {
-      alert('Please load your data file in the extension options first.');
+// This function will be injected into the active tab
+function autoFillForm(profile) {
+    if (!profile) {
+      console.log('Job Bot: No profile data available to fill the form.');
       return;
     }
 
     // Helper function to safely set the value of an input field
     const safeSetValue = (selector, value) => {
-      const element = document.querySelector(selector);
-      if (element) {
-        element.value = value;
-      } else {
-        console.log(`Job Bot: Could not find element with selector: ${selector}`);
+      // Ensure value is not null or undefined
+      if (value === null || typeof value === 'undefined') return;
+      try {
+        const element = document.querySelector(selector);
+        if (element) {
+          element.value = value;
+        } else {
+          console.log(`Job Bot: Could not find element with selector: ${selector}`);
+        }
+      } catch (e) {
+        console.error(`Job Bot: Error with selector "${selector}":`, e);
       }
     };
 
-    const profile = data.profile;
-    const locationParts = profile.location.split(', ');
+    const locationParts = profile.location ? profile.location.split(', ') : ['', ''];
     const city = locationParts[0];
     const province = locationParts.length > 1 ? locationParts[1] : '';
+    const fullName = profile.name || '';
+    const nameParts = fullName.split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
 
-    safeSetValue('input[name="firstName"], input[placeholder*="First name"]', profile.name.split(' ')[0]);
-    safeSetValue('input[name="lastName"], input[placeholder*="Last name"]', profile.name.split(' ').slice(1).join(' '));
-    safeSetValue('input[name="email"], input[type="email"]', profile.contact_info.email);
-    safeSetValue('input[name="phone"], input[type="tel"]', profile.contact_info.phone);
-    safeSetValue('input[name*="address"], input[placeholder*="Address"]', profile.address);
-    safeSetValue('input[name*="city"], input[placeholder*="City"]', city);
-    safeSetValue('input[name*="province"], input[placeholder*="Province"], input[placeholder*="State / Province"]', province);
-    safeSetValue('input[name*="postal"], input[placeholder*="Postal Code"]', profile.postal_code);
-    safeSetValue('input[name*="linkedin"], input[placeholder*="LinkedIn"]', profile.linkedin_url);
-    safeSetValue('input[name*="date-available"], input[placeholder*="Date Available"]', ''); // No data for this yet
+
+    safeSetValue('input[name*="firstName" i], input[placeholder*="First name" i]', firstName);
+    safeSetValue('input[name*="lastName" i], input[placeholder*="Last name" i]', lastName);
+    safeSetValue('input[name*="email" i], input[type="email"]', profile.contact_info?.email);
+    safeSetValue('input[name*="phone" i], input[type="tel"]', profile.contact_info?.phone);
+    safeSetValue('input[name*="address" i], input[placeholder*="Address" i]', profile.address);
+    safeSetValue('input[name*="city" i], input[placeholder*="City" i]', city);
+    safeSetValue('input[name*="province" i], input[placeholder*="Province" i], input[placeholder*="State / Province" i]', province);
+    safeSetValue('input[name*="postal" i], input[placeholder*="Postal Code" i]', profile.postal_code);
+    safeSetValue('input[name*="linkedin" i], input[placeholder*="LinkedIn" i]', profile.linkedin_url);
+    safeSetValue('input[name*="website" i], input[placeholder*="Website" i]', profile.portfolio_url);
+    safeSetValue('input[name*="date-available" i], input[placeholder*="Date Available" i]', ''); // No data for this yet
+}
+
+// Helper to inject the autoFillForm function into the active tab
+function injectAutoFill(profileData) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs.length > 0) {
+      chrome.scripting.executeScript({
+        target: { tabId: tabs[0].id },
+        func: autoFillForm,
+        args: [profileData]
+      });
+    } else {
+      console.error("Job Bot: Could not find an active tab to inject script.");
+    }
   });
 }

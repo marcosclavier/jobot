@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 motor
-pydantic
+pydantic[email]
 passlib
 python-jose
 python-dotenv
@@ -12,3 +12,6 @@ requests
 beautifulsoup4
 pyotp
 APScheduler
+slowapi
+httpx
+pytest-asyncio

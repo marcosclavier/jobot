@@ -1,44 +1,85 @@
 async function autoFillForm() {
-  const domain = window.location.hostname;
+  const url = new URL(window.location.href);
+  const jobId = url.searchParams.get("jobId"); // Assuming jobId is in the URL
+
+  if (!jobId) {
+    alert("Job ID not found in URL.");
+    return;
+  }
 
   try {
-    // Fetch selectors from the backend
-    const response = await fetch(`http://127.0.0.1:8000/api/selectors?domain=${domain}`);
-    const remoteSelectors = await response.json();
+    // 1. Get auth token
+    const token = await new Promise((resolve) => {
+      chrome.storage.local.get(["authToken"], (result) => {
+        resolve(result.authToken);
+      });
+    });
 
-    // Get local data
+    if (!token) {
+      alert("Authentication token not found. Please log in.");
+      return;
+    }
+
+    // 2. Call the new generate-documents endpoint
+    const response = await fetch(`http://127.0.0.1:8000/api/jobs/${jobId}/generate-documents`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to generate documents: ${response.statusText}`);
+    }
+
+    const documents = await response.json();
+
+    // 3. Fetch selectors and fill the form
+    const selectorResponse = await fetch(`http://127.0.0.1:8000/api/selectors?domain=${window.location.hostname}`);
+    const selectors = await selectorResponse.json();
+
     chrome.storage.local.get(['appData'], (result) => {
       const data = result.appData;
       if (!data) return alert('Load data first.');
 
-      // Fill form using remote selectors
-      fillFields(remoteSelectors, data);
+      // Fill form using remote selectors and generated documents
+      fillFields(selectors, data, documents);
     });
-  } catch (error) {
-    console.error('Could not fetch remote selectors, falling back to local:', error);
-    // Fallback to local selectors if the backend is unavailable
-    chrome.storage.local.get(['appData', 'learnedSelectors'], (result) => {
-      const data = result.appData;
-      const selectors = result.learnedSelectors || {};
-      if (!data) return alert('Load data first.');
 
-      const domainSelectors = selectors[domain] || {};
-      fillFields(domainSelectors, data);
-    });
+  } catch (error) {
+    console.error('Error during form fill:', error);
+    alert(`An error occurred: ${error.message}`);
   }
 }
 
-function fillFields(selectors, data) {
-  // Try to fill with learned/default selectors
+function fillFields(selectors, data, documents) {
+  // Fill basic fields
   fillField(selectors.firstName || 'input[placeholder*="First name"]', data.profile.name.split(' ')[0]);
   fillField(selectors.lastName || 'input[placeholder*="Last name"]', data.profile.name.split(' ').slice(1).join(' '));
   fillField(selectors.email || 'input[type="email"]', data.profile.contact_info.email);
   fillField(selectors.phone || 'input[type="tel"]', data.profile.contact_info.phone);
-  // Add more: cover letter, questions, etc.
 
-  // Upload resume (prompt user due to security)
-  const resumeInput = document.querySelector('input[type="file"]');
-  if (resumeInput) alert('Select resume manually.');
+  // Fill with generated content
+  if (documents.cover_letter) {
+    fillField(selectors.coverLetter || 'textarea[name*="cover_letter"]', documents.cover_letter);
+  }
+
+  // Handle resume upload
+  if (documents.refined_resume) {
+    // This is tricky due to security restrictions. We can't set the value of a file input.
+    // We can, however, prompt the user to download the resume and select it.
+    const resumeBlob = new Blob([documents.refined_resume], { type: 'text/plain' });
+    const resumeUrl = URL.createObjectURL(resumeBlob);
+    const downloadLink = document.createElement('a');
+    downloadLink.href = resumeUrl;
+    downloadLink.download = "refined_resume.txt";
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+
+    alert("Your refined resume has been downloaded. Please upload it to the file input field.");
+  }
 
   // If fill fails, trigger learning
   if (!document.querySelector(selectors.firstName)) {

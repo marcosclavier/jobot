@@ -29,17 +29,6 @@
             transition: opacity 0.3s;
         }
 
-        .tooltip .tooltiptext::after {
-            content: "";
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            margin-left: -5px;
-            border-width: 5px;
-            border-style: solid;
-            border-color: #333 transparent transparent transparent;
-        }
-
         .tooltip:hover .tooltiptext {
             visibility: visible;
             opacity: 1;
@@ -68,32 +57,80 @@
             <p id="uploadStatus" class="mt-2 text-sm text-gray-600"></p>
         </div>
 
-        <div id="job-matches" class="p-6 border border-gray-200 rounded-lg bg-gray-50">
-            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Job Matches</h2>
-            <div class="flex items-center space-x-4 mb-4">
-                <button id="runJobMatchingButton" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
-                    Run Job Matching
-                </button>
-                <p id="jobMatchingStatus" class="text-sm text-gray-600"></p>
+        <!-- Navigation Tabs -->
+        <div class="mb-4 border-b border-gray-200">
+            <ul class="flex flex-wrap -mb-px text-sm font-medium text-center" id="myTab" data-tabs-toggle="#myTabContent" role="tablist">
+                <li class="mr-2" role="presentation">
+                    <button class="inline-block p-4 border-b-2 rounded-t-lg" id="matched-jobs-tab" data-tabs-target="#matched-jobs" type="button" role="tab" aria-controls="matched-jobs" aria-selected="false">Matched Jobs</button>
+                </li>
+                <li class="mr-2" role="presentation">
+                    <button class="inline-block p-4 border-b-2 rounded-t-lg hover:text-gray-600 hover:border-gray-300" id="saved-jobs-tab" data-tabs-target="#saved-jobs" type="button" role="tab" aria-controls="saved-jobs" aria-selected="false">Saved Jobs</button>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Tab Content -->
+        <div id="myTabContent">
+            <!-- Matched Jobs Tab -->
+            <div class="hidden p-4 rounded-lg bg-gray-50" id="matched-jobs" role="tabpanel" aria-labelledby="matched-jobs-tab">
+                <div class="flex items-center space-x-4 mb-4">
+                    <button id="runJobMatchingButton" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                        Run Job Matching
+                    </button>
+                    <p id="jobMatchingStatus" class="text-sm text-gray-600"></p>
+                </div>
+
+                <div class="mb-4">
+                    <label for="matchedStatusFilter" class="block text-sm font-medium text-gray-700">Filter by Status:</label>
+                    <select id="matchedStatusFilter" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                        <option value="">All</option>
+                        <option value="pending">Pending</option>
+                        <option value="applied">Applied</option>
+                        <option value="liked">Liked</option>
+                        <option value="disliked">Disliked</option>
+                    </select>
+                </div>
+                <div id="matched-job-list" class="mt-6 space-y-4">
+                    <!-- Matched Job cards will be loaded here -->
+                </div>
             </div>
 
-            <div class="mb-4">
-                <label for="statusFilter" class="block text-sm font-medium text-gray-700">Filter by Status:</label>
-                <select id="statusFilter" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
-                    <option value="">All</option>
-                    <option value="pending">Pending</option>
-                    <option value="applied">Applied</option>
-                    <option value="liked">Liked</option>
-                    <option value="disliked">Disliked</option>
-                </select>
-            </div>
-
-            <div id="job-list" class="mt-6 space-y-4">
-                <!-- Job matches will be loaded here -->
+            <!-- Saved Jobs Tab -->
+            <div class="hidden p-4 rounded-lg bg-gray-50" id="saved-jobs" role="tabpanel" aria-labelledby="saved-jobs-tab">
+                <div id="saved-job-list" class="mt-6 space-y-4">
+                    <!-- Saved Job cards will be loaded here -->
+                </div>
             </div>
         </div>
+
+        <!-- Job Card Template (Hidden, to be cloned by JavaScript) -->
+        <template id="job-card-template">
+            <div class="job-card bg-white p-4 shadow rounded-lg border border-gray-200">
+                <h3 class="text-xl font-semibold text-gray-800" data-job-title></h3>
+                <p class="text-gray-600" data-company-name></p>
+                <p class="text-gray-500 text-sm" data-job-location></p>
+                <p class="text-gray-700 mt-2 text-sm" data-job-description></p>
+                <div class="flex items-center mt-3 text-sm text-gray-700">
+                    <span class="font-medium">Match Score:</span>
+                    <span class="ml-1 font-bold" data-match-score></span>/10
+                    <div class="tooltip ml-2">
+                        <span class="cursor-help text-blue-500">Why?</span>
+                        <span class="tooltiptext" data-match-explanation></span>
+                    </div>
+                </div>
+                <div class="mt-4 flex space-x-2">
+                    <a href="#" target="_blank" class="apply-button bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold py-2 px-3 rounded">Apply</a>
+                    <button class="remove-button bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-2 px-3 rounded">Remove</button>
+                    <button class="save-button bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-bold py-2 px-3 rounded">Save</button>
+                    <button class="feedback-like-button bg-green-500 hover:bg-green-600 text-white text-sm font-bold py-2 px-3 rounded">👍</button>
+                    <button class="feedback-dislike-button bg-orange-500 hover:bg-orange-600 text-white text-sm font-bold py-2 px-3 rounded">👎</button>
+                </div>
+            </div>
+        </template>
+
     </div>
 
-    <script src="/static/auth.js"></script>
+    
+    <script src="/static/dashboard.js"></script> <!-- New JS file for dashboard logic -->
 </body>
 </html>

@@ -4,8 +4,7 @@
 Job Application Automation Bot
 
 This script automates the process of finding and applying for jobs.
-It now includes functionality to parse resumes, enhance user profiles using AI,
-and manage the bot through a CLI interface.
+
 """
 
 import os

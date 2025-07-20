@@ -93,8 +93,11 @@ def test_export_docs_no_placeholders_in_header(mock_load_json, mock_load_profile
     mock_load_profile.return_value = {}
     mock_load_json.return_value = [{"job_details": {"title": "Dev", "company": {"display_name": "ABC"}}, "generated_materials": {"cover_letter": "CL", "refined_resume": "RES", "question_answers": []}}]
     
+    runner = CliRunner()
     with patch('os.makedirs'), patch('main.add_styled_header') as mock_add_styled_header:
-        export_docs.callback()
+        result = runner.invoke(export_docs)
+        assert result.exit_code == 0
+
         assert mock_add_styled_header.called
         # The second argument to add_styled_header is the text
         header_text_arg = mock_add_styled_header.call_args[0][1]
@@ -107,8 +110,11 @@ def test_export_docs_with_profile_data(mock_load_json, mock_load_profile, mock_e
     mock_load_profile.return_value = {"name": "Test User", "contact_info": {"email": "test@example.com"}, "location": "Test City"}
     mock_load_json.return_value = [{"job_details": {"title": "Dev", "company": {"display_name": "ABC"}}, "generated_materials": {"cover_letter": "CL", "refined_resume": "RES", "question_answers": []}}]
     
+    runner = CliRunner()
     with patch('os.makedirs'), patch('main.add_styled_header') as mock_add_styled_header:
-        export_docs.callback()
+        result = runner.invoke(export_docs)
+        assert result.exit_code == 0
+
         assert mock_add_styled_header.called
         header_text_arg = mock_add_styled_header.call_args[0][1]
         assert "Test User" in header_text_arg
@@ -121,8 +127,11 @@ def test_export_docs_empty_materials_content(mock_load_json, mock_load_profile, 
     mock_load_profile.return_value = {}
     mock_load_json.return_value = [{"job_details": {"title": "Dev", "company": {"display_name": "ABC"}}, "generated_materials": {}}]
 
+    runner = CliRunner()
     with patch('os.makedirs'), patch('main.add_formatted_content') as mock_add_formatted_content:
-        export_docs.callback()
+        result = runner.invoke(export_docs)
+        assert result.exit_code == 0
+
         assert mock_add_formatted_content.call_count == 2
         # Check that the content passed is empty, not the default "Not generated."
         assert mock_add_formatted_content.call_args_list[0][0][1] == ''

@@ -1,0 +1,1 @@
+Start Server: cd ~/Documents/jobot/job_bot_project && ../jobbot_env/bin/python -m uvicorn backend.main:app --reload

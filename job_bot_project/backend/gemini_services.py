@@ -122,30 +122,11 @@ def enhance_profile_with_gemini(resume_text):
         logging.error(f"Error enhancing profile with Gemini: {e}", exc_info=True)
         return None
 
-def expand_keywords_with_gemini(base_keywords):
-    """Expands a list of keywords using Gemini for better search results."""
-    logging.info("Calling Gemini to expand keywords...")
-    try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
-        prompt = f"""
-        Given the following list of skills, generate a list of 20-30 related and synonymous keywords to improve job search results.
-        Return only a comma-separated list of keywords.
-
-        Skills: {', '.join(base_keywords)}
-        """
-        response = model.generate_content(prompt)
-        expanded_keywords = [k.strip() for k in response.text.split(',')]
-        logging.info("Successfully expanded keywords with Gemini.")
-        return list(set(base_keywords + expanded_keywords)) # Combine and remove duplicates
-    except google_exceptions.ResourceExhausted as e:
-        logging.error(f"Gemini API quota exceeded: {e}", exc_info=True)
-        return base_keywords
-    except Exception as e:
-        logging.error(f"Error expanding keywords with Gemini: {e}", exc_info=True)
-        return base_keywords # Fallback to original keywords
 
 def extract_questions_from_description(html_content):
-    """Extracts potential application questions from a job description."""
+    """
+    Extracts potential application questions from a job description.
+    """
     soup = BeautifulSoup(html_content, 'html.parser')
     questions = []
     for tag in soup.find_all(['li', 'p']):
@@ -154,7 +135,9 @@ def extract_questions_from_description(html_content):
     return questions
 
 def generate_application_materials(job_data, profile, custom_prompt=""):
-    """Generates cover letter, resume suggestions, and answers to questions for a job."""
+    """
+    Generates cover letter, resume suggestions, and answers to questions for a job.
+    """
     job_title = job_data.get('job_details', {}).get('title', 'N/A')
     logging.info(f"Generating materials for: {job_title}")
 
@@ -217,7 +200,8 @@ def generate_application_materials(job_data, profile, custom_prompt=""):
                 return None
     return None
 
-# --- Material Refinement ---\ndef simulate_ats_score(job_details, materials):
+# --- Material Refinement ---
+def simulate_ats_score(job_details, materials):
     """
     Simulates an ATS (Applicant Tracking System) score by matching keywords
     from the job description with the generated application materials.
@@ -383,7 +367,8 @@ def apply_validation_feedback(materials, validation_feedback):
         logging.error(f"Error applying validation feedback: {e}", exc_info=True)
         return materials
 
-# --- New Function for Refined Resume ---\ndef generate_refined_resume(profile, materials, job_data):
+# --- New Function for Refined Resume ---
+def generate_refined_resume(profile, materials, job_data):
     """
     Uses Gemini to generate a refined resume based on the user\'s profile and resume suggestions.
     The generated resume is tailored to the specific job description.
@@ -439,6 +424,37 @@ def apply_validation_feedback(materials, validation_feedback):
         logging.error(f"Error generating refined resume for {job_title}: {e}", exc_info=True)
         return "Failed to generate refined resume."
 
+def extract_keywords_from_job_description(job_description: str) -> list[str]:
+    """
+    Extracts key skills and technologies from a job description using Gemini.
+    """
+    if not job_description:
+        return []
+
+    logging.info("Calling Gemini to extract keywords from job description...")
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        prompt = f"""
+        Analyze the following job description and extract the most relevant skills, technologies, and job-related keywords.
+        Focus on terms that would be useful for job searching and filtering.
+        Return only a comma-separated list of these keywords.
+
+        Job Description:
+        ---
+        {job_description[:4000]}
+        ---
+        """
+        response = model.generate_content(prompt)
+        keywords = [k.strip() for k in response.text.split(',') if k.strip()]
+        logging.info("Successfully extracted keywords from job description with Gemini.")
+        return list(set(keywords)) # Remove duplicates
+    except google_exceptions.ResourceExhausted as e:
+        logging.error(f"Gemini API quota exceeded while extracting keywords: {e}", exc_info=True)
+        return []
+    except Exception as e:
+        logging.error(f"Error extracting keywords with Gemini: {e}", exc_info=True)
+        return []
+
 def evaluate_job_fit(job, user_profile):
     """
     Evaluates job fit using Gemini and calculates a skill match percentage.
@@ -461,9 +477,15 @@ def evaluate_job_fit(job, user_profile):
 
     logging.info(f"Calling Gemini to evaluate job fit for: {job.get('title')}")
     try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
+        # Create a serializable copy of the profile
+        profile_for_prompt = user_profile.copy()
+        for key, value in profile_for_prompt.items():
+            if isinstance(value, object) and hasattr(value, 'binary'): # A simple check for ObjectId-like objects
+                profile_for_prompt[key] = str(value)
+
+        model = genai.GenerativeModel('gemini-2.5-flash-lite-preview-06-17')
         prompt = f"""
-        User Profile: {json.dumps(user_profile, indent=2)}
+        User Profile: {json.dumps(profile_for_prompt, indent=2)}
         Job Description: {job_description}
 
         Based on the user profile and job description, perform the following tasks:

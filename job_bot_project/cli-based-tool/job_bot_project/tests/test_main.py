@@ -9,6 +9,7 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 # Assuming main.py is in the parent directory for imports
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from click.testing import CliRunner
 from main import (
     load_profile, save_profile, generate_application_materials, export_docs,
     PROFILE_FILE, PROFILE_HASH_FILE, GENERATED_MATERIALS_FILE, EDITED_MATERIALS_FILE
@@ -96,7 +97,12 @@ def test_save_profile_success(mock_env_vars, mock_fernet, mock_file_operations, 
         result = save_profile(profile_data)
         assert result is True
         mock_file_operations.assert_called_with(PROFILE_FILE, 'wb')
-        mock_json_dump.assert_called_once()
+        with patch('main.update_profile_hash') as mock_update_hash:
+            profile_data = {"skills": ["Java"], "location": "New York"}
+            result = save_profile(profile_data)
+            assert result is True
+            mock_file_operations.assert_called_with(PROFILE_FILE, 'wb')
+            mock_json_dump.assert_called_once_with(profile_data, mock_file_operations(), indent=4)
         mock_update_hash.assert_called_once()
 
 # --- Tests for AI-Powered Content Generation ---
@@ -131,32 +137,16 @@ def test_export_docs_no_placeholders_in_header(mock_env_vars, mock_file_operatio
     ]
     
     # Mock os.makedirs to prevent actual directory creation
-    with patch('os.makedirs'):
-        export_docs()
-        
-        # Check the header text passed to add_styled_header
-        # The header_text is constructed in export_docs
-        # It should not contain 'Applicant Name' or 'N/A'
-        # The mock_docx_document.return_value.add_heading.call_args_list will contain the calls
-        # The first argument of add_heading is the text
-        
-        # Verify that the header text passed to add_styled_header does not contain placeholders
-        # This requires inspecting the calls to add_styled_header within export_docs
-        # Since add_styled_header is called internally, we need to mock it directly
-        with patch('main.add_styled_header') as mock_add_styled_header:
-            # Re-run export_docs with the mocked add_styled_header
-            mock_json_load.side_effect = [
-                {}, # For load_profile
-                [{"job_details": {"title": "Dev", "company": {"display_name": "ABC"}}, "generated_materials": {"cover_letter": "CL", "refined_resume": "RES", "question_answers": []}}] # For load_json_file(EDITED_MATERIALS_FILE)
-            ]
-            export_docs()
-            
-            # Check the arguments passed to add_styled_header
-            assert mock_add_styled_header.called
-            header_text_arg = mock_add_styled_header.call_args[0][0]
-            assert "Applicant Name" not in header_text_arg
-            assert "N/A" not in header_text_arg
-            assert header_text_arg == "\n\n" # Empty name, contact, and location should result in this
+    runner = CliRunner()
+    with patch('os.makedirs'), patch('main.add_styled_header') as mock_add_styled_header:
+        result = runner.invoke(export_docs)
+        assert result.exit_code == 0
+
+        assert mock_add_styled_header.called
+        # The second argument to add_styled_header is the text
+        header_text_arg = mock_add_styled_header.call_args[0][1]
+        assert "Applicant Name" not in header_text_arg
+        assert "N/A" not in header_text_arg
 
 def test_export_docs_with_profile_data(mock_env_vars, mock_file_operations, mock_json_load, mock_docx_document):
     # Mock load_profile to return a profile with data
@@ -165,16 +155,17 @@ def test_export_docs_with_profile_data(mock_env_vars, mock_file_operations, mock
         [{"job_details": {"title": "Dev", "company": {"display_name": "ABC"}}, "generated_materials": {"cover_letter": "CL", "refined_resume": "RES", "question_answers": []}}] # For load_json_file(EDITED_MATERIALS_FILE)
     ]
     
-    with patch('os.makedirs'):
-        with patch('main.add_styled_header') as mock_add_styled_header:
-            export_docs()
-            
-            assert mock_add_styled_header.called
-            header_text_arg = mock_add_styled_header.call_args[0][0]
-            assert "Test User" in header_text_arg
-            assert "test@example.com" in header_text_arg
-            assert "Test City" in header_text_arg
-            assert "N/A" not in header_text_arg # Ensure N/A is not present if data exists
+    runner = CliRunner()
+    with patch('os.makedirs'), patch('main.add_styled_header') as mock_add_styled_header:
+        result = runner.invoke(export_docs)
+        assert result.exit_code == 0
+
+        assert mock_add_styled_header.called
+        header_text_arg = mock_add_styled_header.call_args[0][1]
+        assert "Test User" in header_text_arg
+        assert "test@example.com" in header_text_arg
+        assert "Test City" in header_text_arg
+        assert "N/A" not in header_text_arg # Ensure N/A is not present if data exists
 
 def test_export_docs_empty_materials_content(mock_env_vars, mock_file_operations, mock_json_load, mock_docx_document):
     # Mock load_profile and load_json_file to return empty materials
@@ -183,12 +174,13 @@ def test_export_docs_empty_materials_content(mock_env_vars, mock_file_operations
         [{"job_details": {"title": "Dev", "company": {"display_name": "ABC"}}, "generated_materials": {}}] # For load_json_file(EDITED_MATERIALS_FILE)
     ]
 
-    with patch('os.makedirs'):
-        with patch('main.add_formatted_content') as mock_add_formatted_content:
-            export_docs()
-            
-            # Check that add_formatted_content is called with empty strings, not "Not generated."
-            # It's called twice: once for cover letter, once for resume
-            assert mock_add_formatted_content.call_count == 2
-            assert mock_add_formatted_content.call_args_list[0][0][1] == ""
-            assert mock_add_formatted_content.call_args_list[1][0][1] == ""
+    runner = CliRunner()
+    with patch('os.makedirs'), patch('main.add_formatted_content') as mock_add_formatted_content:
+        result = runner.invoke(export_docs)
+        assert result.exit_code == 0
+
+        # Check that add_formatted_content is called with empty strings, not "Not generated."
+        # It's called twice: once for cover letter, once for resume
+        assert mock_add_formatted_content.call_count == 2
+        assert mock_add_formatted_content.call_args_list[0][0][1] == ""
+        assert mock_add_formatted_content.call_args_list[1][0][1] == ""

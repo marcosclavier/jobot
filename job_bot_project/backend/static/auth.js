@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const token = localStorage.getItem('token');
-    const jobListDiv = document.getElementById('job-list');
-    const statusFilter = document.getElementById('statusFilter');
+    const token = document.cookie.split('; ').find(row => row.startsWith('access_token='))?.split('=')[1];
+    const jobListDiv = document.getElementById('matched-job-list');
+    const statusFilter = document.getElementById('matchedStatusFilter');
 
     // Redirect to login if no token on dashboard page
     if (window.location.pathname === '/static/index.html' && !token) {
@@ -186,7 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
-            const response = await fetch('/api/login', {
+            const response = await fetch('/api/token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: new URLSearchParams({
@@ -196,8 +196,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             if (response.ok) {
                 const data = await response.json();
-                localStorage.setItem('token', data.access_token);
-                window.location.href = '/static/index.html';
+                document.cookie = `access_token=${data.access_token}; path=/; max-age=${data.expires_in || 3600}`; // Set cookie with max-age
+                window.location.href = '/dashboard';
             } else {
                 const error = await response.json();
                 document.getElementById('error-message').textContent = error.detail;
@@ -259,8 +259,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const logoutButton = document.getElementById('logoutButton');
     if (logoutButton) {
         logoutButton.addEventListener('click', () => {
-            localStorage.removeItem('token');
-            window.location.href = '/static/login.html';
+            document.cookie = "access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
+            window.location.href = '/login';
         });
     }
 
@@ -273,6 +273,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial fetch of job matches when the dashboard loads
     if (window.location.pathname === '/static/index.html' && token) {
+        checkForExistingProfile(); // Call the new function on page load
         fetchAndDisplayJobMatches();
+    }
+
+    // --- Function to check for an existing profile on page load ---
+    async function checkForExistingProfile() {
+        if (!token) return; // No token, no profile
+
+        try {
+            const response = await fetch('/api/me/profile', {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const profile = await response.json();
+                // Profile exists, update the UI
+                const uploadStatus = document.getElementById('uploadStatus');
+                const uploadButton = document.getElementById('uploadButton');
+                const cvFileInput = document.getElementById('cvFile');
+                
+                uploadStatus.textContent = `Profile for ${profile.name} is loaded.`;
+                uploadButton.disabled = true;
+                uploadButton.textContent = 'Profile Loaded';
+                uploadButton.classList.add('bg-gray-400', 'cursor-not-allowed');
+                uploadButton.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                cvFileInput.disabled = true;
+
+            } else if (response.status === 404) {
+                // Profile does not exist, do nothing. The user needs to upload.
+                console.log('No profile found for user. CV upload is required.');
+            }
+        } catch (error) {
+            console.error('Error checking for profile:', error);
+        }
     }
 });

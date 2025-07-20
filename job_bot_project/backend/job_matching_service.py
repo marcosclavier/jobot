@@ -11,6 +11,10 @@ from google.api_core import exceptions as google_exceptions
 from dotenv import load_dotenv
 import re
 from urllib.parse import urlencode, quote
+from collections import Counter
+from datetime import datetime
+
+from .gemini_services import extract_keywords_from_job_description, evaluate_job_fit
 
 # Custom quoting function to ensure spaces are %20
 def quote_plus_to_percent_20(s, safe='/'):
@@ -45,12 +49,20 @@ def scrape_full_description(job):
 
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'DNT': '1', # Do Not Track
-            'Upgrade-Insecure-Requests': '1'
+            'Upgrade-Insecure-Requests': '1',
+            'Connection': 'keep-alive',
+            'Sec-Ch-Ua': '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Linux"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
         }
         page_response = session.get(redirect_url, headers=headers, timeout=SCRAPE_TIMEOUT)
         page_response.raise_for_status()
@@ -67,7 +79,7 @@ def scrape_full_description(job):
 
 def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
     """
-    Fetches job listings from the Adzuna API.
+    Fetches job listings from the Adzuna API using a primary and secondary keywords.
     """
     app_id = os.getenv("ADZUNA_APP_ID")
     app_key = os.getenv("ADZUNA_APP_KEY")
@@ -95,20 +107,15 @@ def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
                 ('app_key', app_key),
                 ('results_per_page', 50),
                 ('what', primary_keyword),
-                ('what_or', ' '.join(secondary_keywords)), # This value will be manually encoded
+                ('what_or', ' '.join(secondary_keywords)),
                 ('sort_by', 'date'),
-                ('max_days_old', MAX_DAYS_OLD),
-                ('page', page) # Page parameter is also part of the query string
+                ('max_days_old', MAX_DAYS_OLD)
             ]
 
             # Manually build the query string to ensure %20 for spaces
             encoded_params = []
             for key, value in params_to_encode:
-                # Special handling for 'what_or' to force %20
-                if key == 'what_or':
-                    encoded_value = quote(str(value), safe='')
-                else:
-                    encoded_value = quote(str(value))
+                encoded_value = quote(str(value), safe='')
                 encoded_params.append(f"{key}={encoded_value}")
             
             query_string = "&".join(encoded_params)
@@ -117,7 +124,7 @@ def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
             logging.info(f"Requesting Adzuna URL: {request_url}")
             response = requests.get(request_url)
             response.raise_for_status()
-            data = response.get('results', [])
+            data = response.json().get('results', []) # Access 'results' key
             all_jobs.extend(data)
             if len(data) < 50:
                 break
@@ -136,7 +143,7 @@ def fetch_adzuna_jobs(profile, primary_keyword, secondary_keywords):
 
 def fetch_indeed_jobs(profile, keywords):
     """
-    Fetches job listings from the Indeed API.
+    Fetches job listings from the Indeed API using a single query string.
     """
     api_key = os.getenv("INDEED_API_KEY")
     logging.info(f"Indeed API key being used: {api_key}")
@@ -147,7 +154,7 @@ def fetch_indeed_jobs(profile, keywords):
     base_url = "https://api.indeed.com/ads/apisearch"
     params = {
         "publisher": api_key,
-        "q": ' '.join(keywords),
+        "q": ' '.join(keywords), # Use the combined query here
         "l": profile.get('location', 'remote'),
         "sort": "date",
         "limit": 50,
@@ -180,77 +187,10 @@ def fetch_indeed_jobs(profile, keywords):
     return all_jobs
 
 # --- AI-Powered Content Generation (adapted from cli-based-tool/job_bot_project/gemini_services.py) ---
-def expand_keywords_with_gemini(base_keywords):
-    """Expands a list of keywords using Gemini for better search results."""
-    logging.info("Calling Gemini to expand keywords...")
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        Given the following list of skills, generate a list of 20-30 related and synonymous keywords to improve job search results.
-        Return only a comma-separated list of keywords.
 
-        Skills: {', '.join(base_keywords)}
-        """
-        response = model.generate_content(prompt)
-        expanded_keywords = [k.strip() for k in response.text.split(',')]
-        logging.info("Successfully expanded keywords with Gemini.")
-        return list(set(base_keywords + expanded_keywords)) # Combine and remove duplicates
-    except google_exceptions.ResourceExhausted as e:
-        logging.error(f"Gemini API quota exceeded: {e}", exc_info=True)
-        return base_keywords
-    except Exception as e:
-        logging.error(f"Error expanding keywords with Gemini: {e}", exc_info=True)
-        return base_keywords # Fallback to original keywords
-
-def evaluate_job_fit(job, user_profile):
-    """Evaluates job fit using Gemini and calculates skill match."""
-    job_description = job.get('full_description', job.get('description', ''))
-    user_skills = set(skill.lower() for skill in user_profile.get('skills', []))
-    
-    found_skills = {skill for skill in user_skills if skill in job_description.lower()}
-    skill_match_percentage = (len(found_skills) / len(user_skills) * 100) if user_skills else 0
-
-    logging.info(f"Calling Gemini to evaluate job fit for: {job.get('title', '')}")
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        # Sanitize profile for Gemini to prevent personal info duplication
-        sanitized_profile = user_profile.copy()
-        if '_id' in sanitized_profile:
-            sanitized_profile['_id'] = str(sanitized_profile['_id'])
-        sanitized_profile.pop('name', None)
-        sanitized_profile.pop('contact_info', None)
-        sanitized_profile.pop('location', None)
-
-        prompt = f"""
-        User Profile: {json.dumps(sanitized_profile, indent=2)}
-        Job Description: {job_description}
-
-        Based on the user profile and job description, perform the following tasks:
-        1. Rate the job fit on a scale of 1-10.
-        2. Provide a brief explanation for the rating.
-        3. Write a concise one-paragraph summary of the job role and its key responsibilities.
-
-        Return a JSON object with the keys: "fit_score", "explanation", and "summary".
-        Example: {{"fit_score": 8, "explanation": "The role aligns well...", "summary": "This is a software engineering role..."}}
-        """
-        response = model.generate_content(prompt)
-        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
-        evaluation = json.loads(cleaned_response)
-        
-        evaluation['skill_match_percentage'] = round(skill_match_percentage, 2)
-        evaluation['matched_skills'] = list(found_skills)
-        
-        logging.info(f"Successfully evaluated job fit for: {job.get('title', '')}")
-        return evaluation
-    except google_exceptions.ResourceExhausted as e:
-        logging.error(f"Gemini API quota exceeded while evaluating job fit: {e}", exc_info=True)
-        return None
-    except Exception as e:
-        logging.error(f"Error evaluating job fit with Gemini: {e}", exc_info=True)
-        return None
 
 # --- Job Matching Orchestration ---
-async def run_job_matching_for_user(user_id, profiles_collection, seen_jobs_collection, recommended_jobs_collection):
+async def run_job_matching_for_user(user_id, profiles_collection, seen_jobs_collection, recommended_jobs_collection, saved_jobs_collection):
     logging.info(f"Starting job matching for user: {user_id}")
     
     profile = await profiles_collection.find_one({"user_id": user_id})
@@ -264,53 +204,48 @@ async def run_job_matching_for_user(user_id, profiles_collection, seen_jobs_coll
     seen_jobs_doc = await seen_jobs_collection.find_one({"user_id": user_id})
     seen_job_ids = seen_jobs_doc.get("job_ids", []) if seen_jobs_doc else []
 
-    all_skills = profile.get('enhanced_skills', [])
-    suggested_keywords = profile.get('suggested_keywords', [])
+    
 
-    # Function to clean and split skill strings into individual keywords
-    def clean_keywords(skill_list):
-        cleaned_words = []
-        for phrase in skill_list:
-            # Replace non-alphanumeric characters (except spaces) with spaces
-            processed_phrase = re.sub(r'[^a-zA-Z0-9\s]', ' ', phrase)
-            # Split by spaces and filter out short/common words
-            words = [word.strip().lower() for word in processed_phrase.split() if len(word.strip()) > 2 and word.lower() not in ['the', 'and', 'for', 'with', 'from', 'to', 'in', 'of', 'a', 'an', 'or', 'is', 'are', 'be', 'has', 'have', 'had', 'do', 'does', 'did', 'not', 'on', 'at', 'by', 'as', 'if', 'it', 'its', 'that', 'this', 'these', 'those', 'can', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'any', 'are', 'aren', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'cannot', 'could', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'isn', 'it', 'its', 'itself', 'just', 'll', 'm', 'ma', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'o', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 're', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 've', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'won', 'y', 'you', 'your', 'yours', 'yourself', 'yourselves']]
-            cleaned_words.extend(words)
-        return list(set(cleaned_words)) # Remove duplicates
+    async def get_user_refined_search_keywords(user_id: str) -> list[str]:
+        """
+        Aggregates keywords from all jobs saved by the user.
+        """
+        saved_jobs_cursor = saved_jobs_collection.find({"user_id": user_id})
+        all_keywords: list[str] = []
+        async for job in saved_jobs_cursor:
+            if "extracted_keywords" in job.get("job_details", {}):
+                all_keywords.extend(job["job_details"]["extracted_keywords"])
+            elif "full_description" in job.get("job_details", {}):
+                extracted = extract_keywords_from_job_description(job["job_details"]["full_description"])
+                all_keywords.extend(extracted)
+                # Optionally, update the job document with extracted keywords for caching
+                await saved_jobs_collection.update_one(
+                    {"_id": job["_id"]},
+                    {"$set": {"job_details.extracted_keywords": extracted}}
+                )
 
-    processed_skills = clean_keywords(all_skills)
-    processed_suggested_keywords = clean_keywords(suggested_keywords)
+        # Aggregate and filter keywords (e.g., top N most frequent, unique)
+        keyword_counts = Counter(all_keywords)
+        # Example: get top 10 keywords
+        top_keywords = [kw for kw, count in keyword_counts.most_common(10)]
 
-    # Combine and ensure uniqueness
-    combined_keywords = list(set(processed_skills + processed_suggested_keywords))
+        return top_keywords
 
-    # Select primary keyword (first non-empty, cleaned keyword)
-    primary_keyword = ''
-    if combined_keywords:
-        primary_keyword = combined_keywords.pop(0) # Use and remove from list
+    # Get keywords from both profile and saved jobs
+    profile_keywords = profile.get("enhanced_skills", []) + profile.get("suggested_keywords", [])
+    saved_job_keywords = await get_user_refined_search_keywords(user_id)
+    
+    # Combine and deduplicate
+    secondary_keywords = list(set(profile_keywords + saved_job_keywords))
 
-    secondary_keywords = combined_keywords # Remaining keywords are secondary
+    # Combine with user's primary search terms (e.g., from profile)
+    primary_search_term = profile.get("preferred_role", "software engineer")
 
-    # Limit the length of secondary keywords for the 'what_or' parameter
-    safe_secondary_keywords = []
-    current_length = 0
-    # Adzuna 'what_or' parameter has a limit, typically around 512 characters.
-    # Let's be conservative and aim for less.
-    MAX_WHAT_OR_LENGTH = 100 # Reduced for testing
-    for keyword in secondary_keywords:
-        if current_length + len(keyword) + 1 > MAX_WHAT_OR_LENGTH: # +1 for space
-            break
-        safe_secondary_keywords.append(keyword)
-        current_length += len(keyword) + 1
+    logging.info(f"Primary Adzuna keyword: '{primary_search_term}', secondary: '{secondary_keywords}'")
+    logging.info(f"Indeed keywords: '{[primary_search_term] + secondary_keywords}'")
 
-    logging.info(f"Primary keyword: '{primary_keyword}'. Using {len(safe_secondary_keywords)} secondary keywords: {safe_secondary_keywords}")
-
-    logging.info(f"Primary keyword for Adzuna: '{primary_keyword}'")
-    logging.info(f"Secondary keywords for Adzuna (safe): {safe_secondary_keywords}")
-
-    adzuna_jobs = fetch_adzuna_jobs(profile, primary_keyword, safe_secondary_keywords)
-    indeed_keywords = [primary_keyword] + safe_secondary_keywords
-    indeed_jobs = fetch_indeed_jobs(profile, indeed_keywords)
+    adzuna_jobs = fetch_adzuna_jobs(profile, primary_search_term, secondary_keywords)
+    indeed_jobs = fetch_indeed_jobs(profile, [primary_search_term] + secondary_keywords)
     all_jobs = adzuna_jobs + indeed_jobs
 
     if all_jobs:
@@ -333,6 +268,11 @@ async def run_job_matching_for_user(user_id, profiles_collection, seen_jobs_coll
                 company = job.get('company', {}).get('display_name', '')
                 logging.info(f"--- Evaluating: {title} at {company} for user {user_id} ---")
                 
+                # Extract keywords from the job description and store them
+                job_full_description = job.get('full_description', job.get('description', ''))
+                extracted_keywords = extract_keywords_from_job_description(job_full_description)
+                job['extracted_keywords'] = extracted_keywords
+
                 evaluation = evaluate_job_fit(job, profile)
                 if not evaluation:
                     logging.error(f"Could not evaluate job: {title} for user {user_id}")
@@ -348,7 +288,7 @@ async def run_job_matching_for_user(user_id, profiles_collection, seen_jobs_coll
                     await recommended_jobs_collection.insert_one({
                         "user_id": user_id,
                         "job_id": job['id'],
-                        "job_details": job,
+                        "job_details": job, # job now includes 'extracted_keywords'
                         "evaluation": evaluation,
                         "timestamp": datetime.utcnow()
                     })
@@ -369,9 +309,9 @@ async def run_job_matching_for_user(user_id, profiles_collection, seen_jobs_coll
 
     logging.info(f"--- Job search finished for user {user_id} ---")
 
-async def run_job_matching_for_all_users(users_collection, profiles_collection, seen_jobs_collection, recommended_jobs_collection):
+async def run_job_matching_for_all_users(users_collection, profiles_collection, seen_jobs_collection, recommended_jobs_collection, saved_jobs_collection):
     logging.info("Starting periodic job matching for all users.")
     async for user in users_collection.find({}):
         user_id = user["_id"]
-        await run_job_matching_for_user(user_id, profiles_collection, seen_jobs_collection, recommended_jobs_collection)
+        await run_job_matching_for_user(user_id, profiles_collection, seen_jobs_collection, recommended_jobs_collection, saved_jobs_collection)
     logging.info("Finished periodic job matching for all users.")
