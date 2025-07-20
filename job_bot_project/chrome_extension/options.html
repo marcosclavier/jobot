@@ -11,8 +11,9 @@
 </head>
 <body>
   <h1>Job Application Auto-Filler Options</h1>
-  <p>Load your profile data from a JSON file. This will be saved locally for the extension to use.</p>
-  <input type="file" id="jsonFile" accept=".json">
+  <p>Paste your authentication token from the Job Bot web portal here. This token will be used to securely fetch your profile data.</p>
+  <textarea id="authToken" rows="5" cols="50" placeholder="Paste your JWT token here..."></textarea>
+  <button id="saveToken">Save Token</button>
   <p id="status"></p>
   <script src="options.js"></script>
 </body>

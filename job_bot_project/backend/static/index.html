@@ -4,30 +4,93 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        h1 { font-size: 22px; }
-        #job-matches { margin-top: 20px; }
-        .job { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+        /* Basic tooltip styles */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 200px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px 0;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%; /* Tooltip above the text */
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .tooltip .tooltiptext::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
     </style>
 </head>
-<body>
-    <h1>Welcome to Your Job Bot Dashboard</h1>
-    <button id="logoutButton" style="position: absolute; top: 20px; right: 20px;">Logout</button>
-    
-    <div>
-        <h2>Upload Your CV</h2>
-        <input type="file" id="cvFile" accept=".pdf,.docx">
-        <button id="uploadButton">Upload</button>
-        <p id="uploadStatus"></p>
-    </div>
+<body class="font-sans bg-gray-100 p-5">
+    <div class="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-lg">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6">Welcome to Your Job Bot Dashboard</h1>
+        <button id="logoutButton" class="absolute top-5 right-5 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+            Logout
+        </button>
+        
+        <div class="mb-8 p-6 border border-gray-200 rounded-lg bg-gray-50">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Upload Your CV</h2>
+            <input type="file" id="cvFile" accept=".pdf,.docx" class="block w-full text-sm text-gray-500
+                file:mr-4 file:py-2 file:px-4
+                file:rounded-full file:border-0
+                file:text-sm file:font-semibold
+                file:bg-blue-50 file:text-blue-700
+                hover:file:bg-blue-100
+            ">
+            <button id="uploadButton" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                Upload
+            </button>
+            <p id="uploadStatus" class="mt-2 text-sm text-gray-600"></p>
+        </div>
 
-    <div id="job-matches">
-        <h2>Job Matches</h2>
-        <button id="runJobMatchingButton">Run Job Matching</button>
-        <p id="jobMatchingStatus"></p>
-        <div id="job-list">
-            <!-- Job matches will be loaded here -->
+        <div id="job-matches" class="p-6 border border-gray-200 rounded-lg bg-gray-50">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Job Matches</h2>
+            <div class="flex items-center space-x-4 mb-4">
+                <button id="runJobMatchingButton" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                    Run Job Matching
+                </button>
+                <p id="jobMatchingStatus" class="text-sm text-gray-600"></p>
+            </div>
+
+            <div class="mb-4">
+                <label for="statusFilter" class="block text-sm font-medium text-gray-700">Filter by Status:</label>
+                <select id="statusFilter" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                    <option value="">All</option>
+                    <option value="pending">Pending</option>
+                    <option value="applied">Applied</option>
+                    <option value="liked">Liked</option>
+                    <option value="disliked">Disliked</option>
+                </select>
+            </div>
+
+            <div id="job-list" class="mt-6 space-y-4">
+                <!-- Job matches will be loaded here -->
+            </div>
         </div>
     </div>
 

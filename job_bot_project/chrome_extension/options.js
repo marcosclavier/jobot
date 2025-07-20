@@ -1,42 +1,30 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const jsonFileInput = document.getElementById('jsonFile');
+  const authTokenTextarea = document.getElementById('authToken');
+  const saveTokenButton = document.getElementById('saveToken');
   const statusP = document.getElementById('status');
 
-  jsonFileInput.addEventListener('change', (event) => {
-    const file = event.target.files[0];
-    if (!file) {
-      statusP.textContent = 'No file selected.';
-      return;
+  // Load saved token when options page opens
+  chrome.storage.sync.get(['authToken'], (result) => {
+    if (result.authToken) {
+      authTokenTextarea.value = result.authToken;
+      statusP.textContent = 'Token loaded.';
     }
+  });
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const rawData = JSON.parse(e.target.result);
-        const adaptedData = {
-          profile: {
-            name: rawData.personal.name,
-            contact_info: {
-              email: rawData.personal.email,
-              phone: rawData.personal.phone
-            },
-            location: rawData.personal.location,
-            address: rawData.personal.address || '',
-            postal_code: rawData.personal.postal_code || '',
-            linkedin_url: rawData.personal.linkedin_url || ''
-          },
-          materials: {
-            cover_letter: "",
-            question_answers: []
-          }
-        };
-        chrome.storage.local.set({ appData: adaptedData }, () => {
-          statusP.textContent = 'Data loaded successfully!';
+  // Save token when button is clicked
+  saveTokenButton.addEventListener('click', () => {
+    const token = authTokenTextarea.value.trim();
+    if (token) {
+      // Basic JWT format validation: check for three parts separated by dots
+      if (token.split('.').length === 3) {
+        chrome.storage.sync.set({ authToken: token }, () => {
+          statusP.textContent = 'Token saved successfully!';
         });
-      } catch (error) {
-        statusP.textContent = 'Error: Invalid JSON file.';
+      } else {
+        statusP.textContent = 'Invalid token format. Please paste a valid JWT.';
       }
-    };
-    reader.readAsText(file);
+    } else {
+      statusP.textContent = 'Please enter a token.';
+    }
   });
 });
