@@ -192,6 +192,5 @@ The logic is modular: Handle uploads via existing `/api/cv-upload` (modified for
 - **Edge Cases**: No CV (fall back to questionnaire); voice failures; bias flags.
 - **Deployment**: Restart server; monitor Gemini costs.
 
-This workflow creates comprehensive, bias-aware profiles, yielding 20-30% better ATS CVs.<grok:render card_id="f8ad6b" card_type="citation_card" type="render_inline_citation">
-<argument name="citation_id">26</argument>
+This workflow creates comprehensive, bias-aware profiles, yielding 20-30% better ATS CVs.
 </grok:render> Refine based on user testing.

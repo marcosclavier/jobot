@@ -108,6 +108,23 @@ ONBOARDING_PROMPT = """
 You are the Job Bot Registration Coach. Start by asking the user to upload their CV (PDF/DOCX) or share LinkedIn/raw text. Once uploaded, confirm extraction and ask 3-5 targeted questions to fill gaps (e.g., 'Want to add achievements to your MIT degree? Omit year?'). Use clusters: name, contact_info, location, education, work_experience, enhanced_skills, etc. Suggest omissions for bias (e.g., hide dates if >15 years). Output extractions as [EXTRACT: cluster_key = {json}]. End with profile summary for review.
 """
 
+REFINEMENT_PROMPT_TEMPLATE = """
+You are a Profile Refinement Coach. Your goal is to help the user enhance their professional profile based on the data provided below.
+Answer their questions, suggest improvements, and help them identify missing information. Be encouraging and provide actionable advice.
+
+To request a change to the user's profile, output a special command in your response. The command format is:
+[UPDATE_PROFILE: {{"cluster": "cluster_name", "action": "replace|add|remove", "value": "the_new_value"}}]
+
+- For array clusters (like 'enhanced_skills', 'work_experience'), 'add' appends an item, and 'remove' deletes a matching item.
+- For object clusters like 'contact_info', you can 'add', 'replace', or 'remove' specific fields like 'email', 'phone', or 'linkedin'.
+  - To add or update, the 'value' must be a dictionary: `[UPDATE_PROFILE: {{"cluster": "contact_info", "action": "add", "value": {{"linkedin": "linkedin.com/in/new-profile"}}}}]`
+  - To remove, the 'value' must be the key name as a string: `[UPDATE_PROFILE: {{"cluster": "contact_info", "action": "remove", "value": "phone"}}]`
+
+--- User's Profile ---
+{profile_data}
+---
+"""
+
 # --- Pydantic Models ---
 class User(BaseModel):
     email: EmailStr
@@ -123,6 +140,13 @@ class UserInDB(UserCreate):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    action: Optional[str] = None
+    temp_token: Optional[str] = None
 
 class TokenData(BaseModel):
     email: Optional[EmailStr] = None
@@ -219,7 +243,7 @@ async def register(request: Request, user: UserCreate):
     await temp_sessions_collection.insert_one({"token": temp_token, "email": user.email, "expires": datetime.utcnow() + timedelta(minutes=30)})
     return {"message": "User registered. Start onboarding chat with token.", "temp_token": temp_token}
 
-@app.post("/api/token", response_model=Token)
+@app.post("/api/token", response_model=TokenResponse)
 @limiter.limit("10/minute")
 async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     user = await users_collection.find_one({"email": form_data.username})
@@ -229,11 +253,35 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    profile = await profiles_collection.find_one({"user_id": user["_id"]})
+    
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user["email"]}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer", "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60}
+
+    if not profile:
+        temp_token = str(uuid.uuid4())
+        await temp_sessions_collection.insert_one({
+            "token": temp_token,
+            "email": user["email"],
+            "expires": datetime.utcnow() + timedelta(minutes=30)
+        })
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "action": "onboarding_chat",
+            "temp_token": temp_token
+        }
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "action": "dashboard"
+    }
 
 async def transcribe_voice(audio_data: str):  # Assume base64 audio from client
     client = speech.SpeechAsyncClient()
@@ -260,36 +308,92 @@ async def onboarding_chat(websocket: WebSocket, temp_token: str = Query(...)):
                 transcribed = await transcribe_voice(data.split(":", 1)[1])
                 data = transcribed
 
-            # Handle toggle commands
-            toggle_match = re.search(r'\[TOGGLE: (\w+\.\w+) = (true|false)\]', data)
-            if toggle_match:
-                key_path = toggle_match.group(1)
-                value = toggle_match.group(2).lower() == 'true'
-                await temp_sessions_collection.update_one(
-                    {"token": temp_token},
-                    {"$set": {f"profile.{key_path}": value}}
-                )
-                await websocket.send_text(f"Toggled {key_path} to {value}")
-                continue
+            # Fetch the latest profile data from the session
+            current_session = await temp_sessions_collection.find_one({"token": temp_token})
+            profile_data = current_session.get("profile", {})
+
+            # Dynamically select the prompt
+            if profile_data:
+                profile_str = json.dumps(profile_data, indent=2, default=str)
+                system_prompt = REFINEMENT_PROMPT_TEMPLATE.format(profile_data=profile_str)
+            else:
+                system_prompt = ONBOARDING_PROMPT
+
             history.append({"role": "user", "parts": [{"text": data}]})
-            gemini_content = [{"role": "model", "parts": [{"text": ONBOARDING_PROMPT}]}] + history
+            gemini_content = [{"role": "model", "parts": [{"text": system_prompt}]}] + history
+            
             model = GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(gemini_content)
             assistant_msg = response.text
-            await websocket.send_text(assistant_msg)
+
+            # Parse for commands and update profile
+            update_match = re.search(r'\[UPDATE_PROFILE: (.*?)\]', assistant_msg, re.DOTALL)
+            if update_match:
+                clean_msg = assistant_msg.replace(update_match.group(0), "").strip()
+                try:
+                    update_data = json.loads(update_match.group(1))
+                    cluster = update_data.get("cluster")
+                    action = update_data.get("action")
+                    value = update_data.get("value")
+
+                    update_query = {}
+                    ARRAY_CLUSTERS = ["education", "work_experience", "enhanced_skills"]
+
+                    if cluster in ARRAY_CLUSTERS:
+                        # Handle array updates
+                        if action == "add":
+                            update_query = {"$push": {f"profile.{cluster}": value}}
+                        elif action == "remove":
+                            update_query = {"$pull": {f"profile.{cluster}": value}}
+                        elif action == "replace":
+                            update_query = {"$set": {f"profile.{cluster}": value}}
+                    else:
+                        # Handle object updates
+                        if action == "add" or action == "replace":
+                            if isinstance(value, dict):
+                                update_fields = {f"profile.{cluster}.{k}": v for k, v in value.items()}
+                                update_query = {"$set": update_fields}
+                            else:
+                                logging.warning(f"Unsupported 'value' type for object cluster update: {type(value)}")
+                        elif action == "remove":
+                            if isinstance(value, str):
+                                update_query = {"$unset": {f"profile.{cluster}.{value}": ""}}
+                            else:
+                                logging.warning(f"Unsupported 'value' type for object cluster remove: {type(value)}")
+
+                    if update_query:
+                        await temp_sessions_collection.update_one({"token": temp_token}, update_query)
+                    
+                    await websocket.send_text(clean_msg)
+
+                except (json.JSONDecodeError, KeyError) as e:
+                    logging.error(f"Error processing UPDATE_PROFILE command: {e}")
+                    await websocket.send_text(assistant_msg) # Send original message on error
+            else:
+                await websocket.send_text(assistant_msg)
+
             history.append({"role": "model", "parts": [{"text": assistant_msg}]})
-            # Parse extractions and store in temp profile
-            extract_match = re.search(r'\[EXTRACT: (\w+) = (.*?)\]', assistant_msg, re.DOTALL)
+
+            # Parse for initial extractions (for the original onboarding)
+            extract_match = re.search(r'\[EXTRACT: (\\w+) = (.*?)\]', assistant_msg, re.DOTALL)
             if extract_match:
                 key = extract_match.group(1)
-                value = json.loads(extract_match.group(2))
-                await temp_sessions_collection.update_one({"token": temp_token}, {"$set": {f"profile.{key}": value}})
+                try:
+                    value = json.loads(extract_match.group(2))
+                    await temp_sessions_collection.update_one({"token": temp_token}, {"$set": {f"profile.{key}": value}})
+                except json.JSONDecodeError as e:
+                    logging.error(f"Error decoding JSON for EXTRACT command: {e}")
+
     except WebSocketDisconnect:
         # On completion, move temp profile to real user
         user = await users_collection.find_one({"email": session["email"]})
         temp_profile = await temp_sessions_collection.find_one({"token": temp_token})
-        if temp_profile.get("profile"):
-            await profiles_collection.insert_one({"user_id": user["_id"], **temp_profile["profile"]})
+        if temp_profile and temp_profile.get("profile"):
+            await profiles_collection.update_one(
+                {"user_id": user["_id"]},
+                {"$set": {"user_id": user["_id"], **temp_profile["profile"]}},
+                upsert=True
+            )
         await temp_sessions_collection.delete_one({"token": temp_token})
 
 # --- OAuth2 Provider for Chrome Extension ---
@@ -456,7 +560,9 @@ async def cv_upload(request: Request, file: UploadFile = File(...), temp_token: 
         buffer.write(file_content)
     
     parsed_data = parse_resume_with_pymupdf(temp_file_path)
-    enhanced_data = await run_agent_workflow(parsed_data)
+    workflow_output = await run_agent_workflow(parsed_data)
+    enhanced_data = workflow_output.get('profile', {})
+    questions = workflow_output.get('questions', [])
 
     if temp_token:
         session = await temp_sessions_collection.find_one({"token": temp_token})
@@ -471,7 +577,10 @@ async def cv_upload(request: Request, file: UploadFile = File(...), temp_token: 
         )
     
     os.remove(temp_file_path)
-    return {"message": "CV processed. Continue in chat for refinements."}
+    return {
+        "message": "CV processed. Here are some questions to help refine your profile:",
+        "questions": questions
+    }
 
 @app.get("/api/matches", response_model=List[dict])
 @limiter.limit("60/minute")
@@ -732,6 +841,11 @@ async def login_page():
 @app.get("/register", response_class=HTMLResponse)
 async def register_page():
     with open("/home/cube/Documents/jobot/job_bot_project/backend/static/register.html") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/onboarding-chat", response_class=HTMLResponse)
+async def onboarding_chat_page(request: Request, current_user: dict = Depends(get_current_user)):
+    with open("/home/cube/Documents/jobot/job_bot_project/backend/static/onboarding-chat.html") as f:
         return HTMLResponse(content=f.read())
 
 @app.get("/dashboard", response_class=HTMLResponse)

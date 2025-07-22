@@ -196,8 +196,13 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             if (response.ok) {
                 const data = await response.json();
-                document.cookie = `access_token=${data.access_token}; path=/; max-age=${data.expires_in || 3600}`; // Set cookie with max-age
-                window.location.href = '/dashboard';
+                document.cookie = `access_token=${data.access_token}; path=/; max-age=${data.expires_in || 3600}`;
+
+                if (data.action === 'onboarding_chat') {
+                    window.location.href = `/onboarding-chat?temp_token=${data.temp_token}`;
+                } else {
+                    window.location.href = '/dashboard';
+                }
             } else {
                 const error = await response.json();
                 document.getElementById('error-message').textContent = error.detail;

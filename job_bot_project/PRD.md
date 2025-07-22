@@ -43,7 +43,7 @@ This phase focuses on establishing the core web application and user management 
 
 **3.4. Registration Chatbot:**
 *   **Objective:** Integrate a conversational AI chatbot into the registration flow to capture user profile information (e.g., name, contact info, education, work experience, skills) through natural dialogue, starting with CV upload, and using multi-agent workflows for refinement. The chatbot builds the candidate's profile using predefined information clusters, ensuring optional and toggleable elements to avoid discrimination (e.g., ageism).
-*   **User Flow:** After submitting email/password in `/api/register`, users are redirected to the chatbot session with a temporary token. The chatbot prompts users to first upload their CV (or LinkedIn profile/raw text) via the `/api/cv-upload` endpoint (adapted for temporary sessions). Once uploaded, the system parses the document to pre-fill 70% of profile clusters, then engages in 3-5 targeted questions to collect the remaining 30%, focusing on high-impact areas like achievements. Users can review and toggle clusters for inclusion/omissions.
+*   **User Flow:** After submitting email/password in `/api/register`, users are redirected to the chatbot session with a temporary token. The chatbot prompts users to first upload their CV (or LinkedIn profile/raw text) via the `/api/cv-upload` endpoint (adapted for temporary sessions). Once uploaded, the system parses the document to pre-fill 70% of profile clusters, then engages in an interactive, one-question-at-a-time dialogue to collect the remaining 30%, focusing on high-impact areas like achievements. User responses to these questions are used to incrementally update the temporary profile. Users can review and toggle clusters for inclusion/omissions.
 *   **Key Components:**
     *   Uses Gemini API for responses, with a system prompt focused on onboarding questions, data extraction, and subtle guidance (e.g., "Tell me about your education—should we omit dates?").
     *   WebSocket-based for real-time interaction during registration.
@@ -82,15 +82,15 @@ This phase focuses on establishing the core web application and user management 
 *   **New API Endpoints:**
     *   `GET /api/onboarding-chat`: WebSocket endpoint for registration chatbot interaction.
 
-**3.5. Career Coach LLM Chatbot:**
-*   **Objective:** Create a WebSocket-based chat endpoint accessible from the dashboard for career planning questions, advice, and profile refinements.
+**3.5. Profile Refinement Coach Chatbot:**
+*   **Objective:** Create a WebSocket-based chat endpoint accessible from the dashboard for ongoing profile refinement, career planning questions, and advice. This chatbot will leverage the user's existing profile to provide personalized guidance and, crucially, to suggest and implement profile updates based on conversational cues and user confirmation.
 *   **Key Components:**
     *   New DB collection: `chat_histories` to store per-user message lists.
-    *   System prompt: Defines the coach's behavior (empathetic, subtle CV prompts, data extraction for clusters like education/achievements).
-    *   WebSocket endpoint: Authenticates via JWT, handles messages, calls Gemini, extracts data, updates profiles.
+    *   System prompt: Defines the coach's behavior (empathetic, subtle CV prompts, data extraction for clusters like education/achievements). It will also instruct the LLM on how to propose profile changes using a structured command format (e.g., `[UPDATE_PROFILE: {"cluster": "skills", "action": "add", "value": "Python"}]`).
+    *   WebSocket endpoint: Authenticates via JWT, handles messages, calls Gemini, extracts data, and *parses for structured update commands*. If a command is found, the backend will safely execute the corresponding update (e.g., `$push`, `$set`) on the user's profile in `profiles_collection`. The command itself will be stripped from the message sent back to the user.
     *   Integration: Link to existing `/api/cv-upload` for notifications; update profiles in `profiles_collection` with extracted data.
-    *   UX Considerations: Make it non-overwhelming (e.g., start with a welcome message); handle omissions (e.g., ageism) and style matching in the prompt.
-    *   Security: Rate limit WebSockets; validate tokens.
+    *   UX Considerations: Make it non-overwhelming (e.g., start with a welcome message); handle omissions (e.g., ageism) and style matching in the prompt. The bot will confirm changes with the user before applying them.
+    *   Security: Rate limit WebSockets; validate tokens; ensure all profile updates are validated against predefined schemas and actions to prevent arbitrary data manipulation.
 *   **New API Endpoints:**
     *   `GET /api/chat`: WebSocket endpoint for real-time chat interaction.
 

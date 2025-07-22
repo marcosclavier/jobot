@@ -22,7 +22,7 @@
   - Test: Local server run; verify form submissions and chat UI rendering.
 
 - **Sub-stage 1.5: Registration Chatbot with Multi-Agent Workflow**
-  - Deliverables: Implement WebSocket endpoint (`GET /api/onboarding-chat`) for registration chatbot, authenticating via temp_token. Use Gemini API with a custom prompt to prompt CV upload first, then ask 3-5 targeted questions to fill gaps (30% of profile data). Integrate multi-agent workflow (inspired by CrewAI):
+  - Deliverables: Implement WebSocket endpoint (`GET /api/onboarding-chat`) for registration chatbot, authenticating via temp_token. Users without profiles will be redicted to `onboarding-chat.html` to summon the chatbot and complete their profile. Use Gemini API with a custom prompt to prompt CV upload first, then ask 3-5 targeted questions to fill gaps (30% of profile data). Integrate multi-agent workflow (inspired by CrewAI):
     - **Parser Agent**: Extracts clusters (e.g., name, contact_info, education) from CV using PyMuPDF and Gemini.
     - **Feedback Agent**: Scores profile completeness (aim for 90%), suggests gaps/omissions (e.g., "Omit graduation_year?").
     - **Validator Agent**: Verifies data, adds toggles (e.g., `{"include": true}`) for clusters, flags bias risks per table (e.g., hide dates >15 years).

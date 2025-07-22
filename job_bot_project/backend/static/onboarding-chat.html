@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Onboarding Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center h-screen">
+    <div class="w-full max-w-2xl bg-white rounded-lg shadow-md p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl font-bold">Welcome! Let's set up your profile.</h1>
+            <button id="dashboard-button" class="px-4 py-2 bg-gray-300 text-white rounded-lg cursor-not-allowed" disabled>Proceed to Dashboard</button>
+        </div>
+        <p class="mb-4">To get started, please upload your CV. We'll parse it to pre-fill your profile, and then ask a few questions to complete it.</p>
+        <div class="mb-4">
+            <input type="file" id="cv-upload" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            <button id="upload-button" class="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg">Upload</button>
+        </div>
+        <div id="chat-container" class="h-96 border rounded-lg p-4 overflow-y-auto"></div>
+        <div class="mt-4 flex">
+            <input type="text" id="chat-input" class="flex-grow border rounded-l-lg p-2" placeholder="Type your message...">
+            <button id="send-button" class="bg-blue-500 text-white rounded-r-lg px-4">Send</button>
+        </div>
+    </div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const tempToken = urlParams.get('temp_token');
+        const accessToken = document.cookie.split('; ').find(row => row.startsWith('access_token='))?.split('=')[1];
+
+        const chatContainer = document.getElementById('chat-container');
+        const chatInput = document.getElementById('chat-input');
+        const sendButton = document.getElementById('send-button');
+        const cvUpload = document.getElementById('cv-upload');
+        const uploadButton = document.getElementById('upload-button');
+        const dashboardButton = document.getElementById('dashboard-button');
+
+        let ws;
+        let questionsQueue = [];
+        let currentQuestionIndex = 0;
+        let inQuestionMode = false;
+
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${window.location.host}/api/onboarding-chat?temp_token=${tempToken}`);
+
+            ws.onopen = () => {
+                appendMessage('System', 'Connected to onboarding chat. Please upload your CV to begin.');
+            };
+
+            ws.onmessage = (event) => {
+                if (!inQuestionMode) {
+                    appendMessage('Assistant', event.data);
+                }
+            };
+
+            ws.onclose = () => {
+                appendMessage('System', 'Disconnected. You can now proceed to the dashboard.');
+                enableDashboardButton();
+            };
+        }
+
+        function appendMessage(sender, message) {
+            const messageElement = document.createElement('div');
+            messageElement.innerHTML = `<strong>${sender}:</strong> ${message}`;
+            chatContainer.appendChild(messageElement);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function enableDashboardButton() {
+            dashboardButton.disabled = false;
+            dashboardButton.classList.remove('bg-gray-300', 'cursor-not-allowed');
+            dashboardButton.classList.add('bg-green-500', 'hover:bg-green-600');
+        }
+
+        function askNextQuestion() {
+            if (currentQuestionIndex < questionsQueue.length) {
+                const question = questionsQueue[currentQuestionIndex];
+                appendMessage('Assistant', question);
+            } else {
+                inQuestionMode = false;
+                appendMessage('System', 'Thank you! Your profile has been updated. You can now proceed to the dashboard.');
+                enableDashboardButton();
+            }
+        }
+
+        function handleSend() {
+            const message = chatInput.value;
+            if (!message) return;
+
+            appendMessage('You', message);
+            
+            if (inQuestionMode) {
+                currentQuestionIndex++;
+                askNextQuestion();
+            } else {
+                ws.send(message);
+            }
+            
+            chatInput.value = '';
+        }
+
+        sendButton.addEventListener('click', handleSend);
+        chatInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                handleSend();
+            }
+        });
+
+        uploadButton.addEventListener('click', async () => {
+            const file = cvUpload.files[0];
+            if (file) {
+                appendMessage('System', 'Processing your CV...');
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch(`/api/cv-upload?temp_token=${tempToken}`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        },
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const errorResult = await response.text();
+                        appendMessage('System', `Error: ${response.statusText}. ${errorResult}`);
+                        return;
+                    }
+
+                    const result = await response.json();
+                    appendMessage('System', result.message);
+
+                    if (result.questions && result.questions.length > 0) {
+                        questionsQueue = result.questions;
+                        currentQuestionIndex = 0;
+                        inQuestionMode = true;
+                        askNextQuestion();
+                    } else {
+                        appendMessage('System', 'No further questions at this time. Your profile is updated.');
+                        enableDashboardButton();
+                    }
+                } catch (error) {
+                    appendMessage('System', `An error occurred during upload: ${error.message}`);
+                }
+            }
+        });
+
+        dashboardButton.addEventListener('click', () => {
+            window.location.href = '/dashboard';
+        });
+
+        connectWebSocket();
+    </script>
+</body>
+</html>
