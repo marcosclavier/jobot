@@ -2,6 +2,8 @@ import PyPDF2
 import docx
 import logging
 import os
+import fitz
+import re
 
 def extract_text_from_pdf(file_path):
     """
@@ -73,3 +75,14 @@ def parse_resume(file_path):
     else:
         logging.error(f"Unsupported file format: {extension}. Please use PDF or DOCX.")
         return None
+
+def parse_resume_with_pymupdf(file_path):
+      doc = fitz.open(file_path)
+      text = ""
+      for page in doc:
+          text += page.get_text()
+      # Simple NLP to extract clusters (improve with regex or Gemini)
+      education_match = re.search(r'Education\s*(.*?)\s*Experience', text, re.DOTALL | re.IGNORECASE)
+      education = {"institution": "Extracted", "degree": "Extracted"} if education_match else {}
+      # Similar for other clusters
+      return {"raw_text": text, "education": education, "work_experience": []}  # Return dict for agents

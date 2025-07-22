@@ -13,8 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Tab switching logic
     const matchedJobsTab = document.getElementById('matched-jobs-tab');
     const savedJobsTab = document.getElementById('saved-jobs-tab');
+    const careerCoachTab = document.getElementById('career-coach-tab');
     const matchedJobsContent = document.getElementById('matched-jobs');
     const savedJobsContent = document.getElementById('saved-jobs');
+    const careerCoachContent = document.getElementById('career-coach');
 
     function switchTab(tabName) {
         if (tabName === 'matched') {
@@ -25,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
             savedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
             savedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
             savedJobsContent.classList.add('hidden');
+            careerCoachContent.classList.add('hidden');
             fetchMatchedJobs();
         } else if (tabName === 'saved') {
             savedJobsTab.classList.add('border-blue-600', 'text-blue-600');
@@ -34,12 +37,26 @@ document.addEventListener('DOMContentLoaded', () => {
             matchedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
             matchedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
             matchedJobsContent.classList.add('hidden');
+            careerCoachContent.classList.add('hidden');
             fetchSavedJobs();
+        } else if (tabName === 'coach') {
+            careerCoachTab.classList.add('border-blue-600', 'text-blue-600');
+            careerCoachTab.classList.remove('hover:text-gray-600', 'hover:border-gray-300');
+            careerCoachContent.classList.remove('hidden');
+
+            matchedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
+            matchedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
+            matchedJobsContent.classList.add('hidden');
+
+            savedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
+            savedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
+            savedJobsContent.classList.add('hidden');
         }
     }
 
     matchedJobsTab.addEventListener('click', () => switchTab('matched'));
     savedJobsTab.addEventListener('click', () => switchTab('saved'));
+    careerCoachTab.addEventListener('click', () => switchTab('coach'));
 
     // Initial tab load
     switchTab('matched');
@@ -132,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     matchedStatusFilter.addEventListener('change', fetchMatchedJobs);
 
-    async function getAuthToken() {
+    function getAuthToken() {
         const name = "access_token=";
         const decodedCookie = decodeURIComponent(document.cookie);
         const ca = decodedCookie.split(';');
@@ -406,4 +423,61 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Call the new function on page load
     checkForExistingProfile();
+
+    // --- Career Coach WebSocket Logic ---
+    let ws;
+
+    function initializeWebSocket() {
+        const token = getAuthToken(); // This function already gets the token from cookies
+        if (!token) {
+            console.error("Authentication token not found. Cannot connect to chat.");
+            return;
+        }
+
+        ws = new WebSocket(`ws://${window.location.host}/api/chat?token=${token}`);
+
+        ws.onopen = () => {
+            console.log("WebSocket connection established.");
+        };
+
+        ws.onmessage = (event) => {
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML += `<p><strong>Coach:</strong> ${event.data}</p>`;
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to bottom
+        };
+
+        ws.onclose = () => {
+            console.log("WebSocket connection closed.");
+        };
+
+        ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+        };
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('chat-input');
+        if (ws && ws.readyState === WebSocket.OPEN && input.value) {
+            ws.send(input.value);
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML += `<p><strong>You:</strong> ${input.value}</p>`;
+            input.value = '';
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to bottom
+        }
+    }
+
+    // Initialize WebSocket when the career coach tab is clicked
+    if (careerCoachTab) {
+        careerCoachTab.addEventListener('click', () => {
+            if (!ws || ws.readyState === WebSocket.CLOSED) {
+                initializeWebSocket();
+            }
+        });
+    }
+
+    // Attach event listener to the send button
+    const sendMessageButton = document.getElementById('sendMessageButton');
+    if (sendMessageButton) {
+        sendMessageButton.addEventListener('click', sendMessage);
+    }
 });

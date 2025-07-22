@@ -61,6 +61,9 @@
         <div class="mb-4 border-b border-gray-200">
             <ul class="flex flex-wrap -mb-px text-sm font-medium text-center" id="myTab" data-tabs-toggle="#myTabContent" role="tablist">
                 <li class="mr-2" role="presentation">
+                    <button class="inline-block p-4 border-b-2 rounded-t-lg" id="career-coach-tab" data-tabs-target="#career-coach" type="button" role="tab" aria-controls="career-coach" aria-selected="false">Career Coach</button>
+                </li>
+                <li class="mr-2" role="presentation">
                     <button class="inline-block p-4 border-b-2 rounded-t-lg" id="matched-jobs-tab" data-tabs-target="#matched-jobs" type="button" role="tab" aria-controls="matched-jobs" aria-selected="false">Matched Jobs</button>
                 </li>
                 <li class="mr-2" role="presentation">
@@ -71,6 +74,15 @@
 
         <!-- Tab Content -->
         <div id="myTabContent">
+            <!-- Career Coach Tab -->
+            <div class="hidden p-4 rounded-lg bg-gray-50" id="career-coach" role="tabpanel" aria-labelledby="career-coach-tab">
+                <div id="chat-container" style="border: 1px solid #ccc; padding: 10px; border-radius: 10px; background: #f9f9f9;">
+                    <div id="chat-messages"></div>
+                    <input id="chat-input" type="text" placeholder="Ask your Career Coach...">
+                    <button id="sendMessageButton">Send</button>
+                </div>
+            </div>
+
             <!-- Matched Jobs Tab -->
             <div class="hidden p-4 rounded-lg bg-gray-50" id="matched-jobs" role="tabpanel" aria-labelledby="matched-jobs-tab">
                 <div class="flex items-center space-x-4 mb-4">
@@ -130,7 +142,6 @@
 
     </div>
 
-    
     <script src="/static/dashboard.js"></script> <!-- New JS file for dashboard logic -->
 </body>
 </html>

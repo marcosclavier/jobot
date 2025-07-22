@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Request, Form
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Request, Form, WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -12,6 +12,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import google.generativeai as genai
+from google.generativeai.types import GenerateContentResponse
 from dotenv import load_dotenv
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -20,12 +21,22 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import asyncio
+import re
+import base64
+import fitz  # PyMuPDF for PDF extraction
+from crewai import Agent, Task, Crew, Process  # For multi-agent workflow
+from google.cloud import speech  # For speech-to-text (multi-modal)
+from google.generativeai import GenerativeModel  # For Gemini in agents
+import uuid  # For temporary session IDs
+
+from .profile_agent_workflow import run_agent_workflow
 
 # These imports are based on your original file structure.
 # Ensure these files exist and the functions are correctly defined.
-from .resume_parser import parse_resume
+from .resume_parser import parse_resume, parse_resume_with_pymupdf
 from .gemini_services import enhance_profile_with_gemini, generate_application_materials
 from .job_matching_service import run_job_matching_for_all_users
+
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO,
@@ -74,6 +85,28 @@ seen_jobs_collection = db.seen_jobs
 recommended_jobs_collection = db.recommended_jobs
 saved_jobs_collection = db.saved_jobs
 password_reset_tokens_collection = db.password_reset_tokens
+chat_histories_collection = db.chat_histories
+temp_sessions_collection = db.temp_sessions  # For pre-login uploads
+
+# --- In-memory storage for WebSocket rate limiting ---
+message_rate_limiter_storage = {}
+
+# --- Career Coach LLM System Prompt ---
+SYSTEM_PROMPT_TEMPLATE = """
+You are Career Coach LLM, a friendly and professional career advisor powered by AI. Your goal is to help users with job searches, resume building, career advice, and more. Be empathetic, positive, and concise—use warm language like "That's a great question!" or "I'm here to help."
+
+Your primary role is to provide career advice and guidance based on the user's profile. Do NOT attempt to extract information to build a profile; another assistant will handle that. Focus on answering career-related questions, providing interview tips, suggesting career paths, and helping them understand their strengths based on the data provided.
+
+--- User Profile Information ---
+{profile_data}
+---
+
+Based on the profile above, provide personalized advice. If the profile is empty, gently guide the user by explaining that you can provide much better advice if their profile is complete, and suggest they use the "Profile Builder" to get started.
+"""
+
+ONBOARDING_PROMPT = """
+You are the Job Bot Registration Coach. Start by asking the user to upload their CV (PDF/DOCX) or share LinkedIn/raw text. Once uploaded, confirm extraction and ask 3-5 targeted questions to fill gaps (e.g., 'Want to add achievements to your MIT degree? Omit year?'). Use clusters: name, contact_info, location, education, work_experience, enhanced_skills, etc. Suggest omissions for bias (e.g., hide dates if >15 years). Output extractions as [EXTRACT: cluster_key = {json}]. End with profile summary for review.
+"""
 
 # --- Pydantic Models ---
 class User(BaseModel):
@@ -182,7 +215,9 @@ async def register(request: Request, user: UserCreate):
     hashed_password = get_password_hash(user.password)
     user_document = {"email": user.email, "hashed_password": hashed_password, "mfa_enabled": False}
     await users_collection.insert_one(user_document)
-    return {"message": "User registered successfully"}
+    temp_token = str(uuid.uuid4())
+    await temp_sessions_collection.insert_one({"token": temp_token, "email": user.email, "expires": datetime.utcnow() + timedelta(minutes=30)})
+    return {"message": "User registered. Start onboarding chat with token.", "temp_token": temp_token}
 
 @app.post("/api/token", response_model=Token)
 @limiter.limit("10/minute")
@@ -199,6 +234,63 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         data={"sub": user["email"]}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer", "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60}
+
+async def transcribe_voice(audio_data: str):  # Assume base64 audio from client
+    client = speech.SpeechAsyncClient()
+    config = speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16, sample_rate_hertz=16000, language_code="en-US")
+    audio = speech.RecognitionAudio(content=base64.b64decode(audio_data))
+    response = await client.recognize(config=config, audio=audio)
+    return response.results[0].alternatives[0].transcript if response.results else ""
+
+@app.websocket("/api/onboarding-chat")
+async def onboarding_chat(websocket: WebSocket, temp_token: str = Query(...)):
+    await websocket.accept()
+    # Validate temp session
+    session = await temp_sessions_collection.find_one({"token": temp_token})
+    if not session or session["expires"] < datetime.utcnow():
+        await websocket.close(code=1008, reason="Invalid or expired session")
+        return
+    # Load temp history if any
+    history = []  # Or load from temp collection
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle multi-modal: If voice, transcribe (example below)
+            if data.startswith("voice:"):  # Assume client prefixes voice data
+                transcribed = await transcribe_voice(data.split(":", 1)[1])
+                data = transcribed
+
+            # Handle toggle commands
+            toggle_match = re.search(r'\[TOGGLE: (\w+\.\w+) = (true|false)\]', data)
+            if toggle_match:
+                key_path = toggle_match.group(1)
+                value = toggle_match.group(2).lower() == 'true'
+                await temp_sessions_collection.update_one(
+                    {"token": temp_token},
+                    {"$set": {f"profile.{key_path}": value}}
+                )
+                await websocket.send_text(f"Toggled {key_path} to {value}")
+                continue
+            history.append({"role": "user", "parts": [{"text": data}]})
+            gemini_content = [{"role": "model", "parts": [{"text": ONBOARDING_PROMPT}]}] + history
+            model = GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(gemini_content)
+            assistant_msg = response.text
+            await websocket.send_text(assistant_msg)
+            history.append({"role": "model", "parts": [{"text": assistant_msg}]})
+            # Parse extractions and store in temp profile
+            extract_match = re.search(r'\[EXTRACT: (\w+) = (.*?)\]', assistant_msg, re.DOTALL)
+            if extract_match:
+                key = extract_match.group(1)
+                value = json.loads(extract_match.group(2))
+                await temp_sessions_collection.update_one({"token": temp_token}, {"$set": {f"profile.{key}": value}})
+    except WebSocketDisconnect:
+        # On completion, move temp profile to real user
+        user = await users_collection.find_one({"email": session["email"]})
+        temp_profile = await temp_sessions_collection.find_one({"token": temp_token})
+        if temp_profile.get("profile"):
+            await profiles_collection.insert_one({"user_id": user["_id"], **temp_profile["profile"]})
+        await temp_sessions_collection.delete_one({"token": temp_token})
 
 # --- OAuth2 Provider for Chrome Extension ---
 AUTHORIZED_CLIENT_IDS = [
@@ -339,9 +431,20 @@ async def get_my_profile(request: Request, current_user: dict = Depends(get_curr
         return profile
     raise HTTPException(status_code=404, detail="Profile not found. Please upload a CV.")
 
+async def get_optional_current_user(request: Request):
+    try:
+        return await get_current_user(request)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return None
+        raise e
+
 @app.post("/api/cv-upload")
 @limiter.limit("5/minute")
-async def cv_upload(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+async def cv_upload(request: Request, file: UploadFile = File(...), temp_token: Optional[str] = Query(None), current_user: dict = Depends(get_optional_current_user)):
+    if not temp_token and not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     file_content = await file.read()
     if len(file_content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds 5 MB.")
@@ -352,16 +455,23 @@ async def cv_upload(request: Request, file: UploadFile = File(...), current_user
     with open(temp_file_path, "wb") as buffer:
         buffer.write(file_content)
     
-    resume_text = parse_resume(temp_file_path)
-    profile_data = enhance_profile_with_gemini(resume_text)
+    parsed_data = parse_resume_with_pymupdf(temp_file_path)
+    enhanced_data = await run_agent_workflow(parsed_data)
+
+    if temp_token:
+        session = await temp_sessions_collection.find_one({"token": temp_token})
+        if not session:
+            raise HTTPException(401, "Invalid session")
+        await temp_sessions_collection.update_one({"token": temp_token}, {"$set": {"profile": enhanced_data}})
+    else:
+        await profiles_collection.update_one(
+            {"user_id": current_user["_id"]},
+            {"$set": {"user_id": current_user["_id"], **enhanced_data}},
+            upsert=True
+        )
     
-    await profiles_collection.update_one(
-        {"user_id": current_user["_id"]},
-        {"$set": {"user_id": current_user["_id"], **profile_data}},
-        upsert=True
-    )
     os.remove(temp_file_path)
-    return {"message": f"CV uploaded and profile updated for {current_user['email']}"}
+    return {"message": "CV processed. Continue in chat for refinements."}
 
 @app.get("/api/matches", response_model=List[dict])
 @limiter.limit("60/minute")
@@ -498,6 +608,8 @@ async def generate_documents_for_job(request: Request, job_id: str, current_user
 
     return final_documents
 
+
+
 # --- Scheduler ---
 scheduler = AsyncIOScheduler()
 
@@ -514,6 +626,88 @@ async def startup_event():
     scheduler.add_job(cleanup_old_recommended_jobs, "cron", hour=4, minute=0)
     scheduler.start()
     logging.info("Scheduler started.")
+
+@app.websocket("/api/chat")
+async def chat_websocket(websocket: WebSocket, token: str = Query(...)):
+    await websocket.accept()
+    
+    # Authenticate user
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        user = await users_collection.find_one({"email": email})
+        if not user:
+            await websocket.close(code=1008, reason="Invalid token")
+            return
+    except JWTError:
+        await websocket.close(code=1008, reason="Invalid token")
+        return
+    
+    user_id = str(user["_id"])
+
+    # Load chat history and user profile
+    chat_doc = await chat_histories_collection.find_one({"user_id": user["_id"]})
+    history = chat_doc.get("messages", []) if chat_doc else []
+    profile = await profiles_collection.find_one({"user_id": user["_id"]}) or {}
+    
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            # --- Manual Rate Limiting Logic ---
+            current_time = datetime.utcnow()
+            if user_id not in message_rate_limiter_storage:
+                message_rate_limiter_storage[user_id] = []
+            
+            # Remove timestamps older than 60 seconds
+            message_rate_limiter_storage[user_id] = [
+                ts for ts in message_rate_limiter_storage[user_id] 
+                if (current_time - ts).total_seconds() < 60
+            ]
+
+            # Check if the user has exceeded the limit
+            if len(message_rate_limiter_storage[user_id]) >= 60:
+                await websocket.send_text("Rate limit exceeded. Please wait a moment.")
+                continue
+
+            # Add the new timestamp
+            message_rate_limiter_storage[user_id].append(current_time)
+            # --- End of Rate Limiting Logic ---
+
+            # Add user message to history
+            history.append({"role": "user", "parts": [{"text": data}]})
+
+            # Prepare Gemini content with dynamic profile data
+            profile_str = json.dumps(profile, indent=2, default=str) # Convert profile to a readable string
+            system_prompt = SYSTEM_PROMPT_TEMPLATE.format(profile_data=profile_str)
+            gemini_content = [{"role": "model", "parts": [{"text": system_prompt}]}] + history
+
+            # Call Gemini
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response: GenerateContentResponse = model.generate_content(gemini_content)
+            
+            assistant_msg = response.text
+
+            # Send to client
+            await websocket.send_text(assistant_msg)
+            
+            # Add to history
+            history.append({"role": "model", "parts": [{"text": assistant_msg}]})
+            
+            # Save history
+            if len(history) > 50:
+                history = history[-50:]
+            await chat_histories_collection.update_one(
+                {"user_id": user["_id"]},
+                {"$set": {"messages": history}},
+                upsert=True
+            )
+
+    except WebSocketDisconnect:
+        logging.info(f"WebSocket disconnected for user: {email}")
+    except Exception as e:
+        logging.error(f"Error in chat websocket for user {email}: {e}", exc_info=True)
+        await websocket.close(code=1011, reason="Internal server error")
 
 @app.on_event("shutdown")
 async def shutdown_event():
