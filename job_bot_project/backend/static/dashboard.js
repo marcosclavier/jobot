@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     const logoutButton = document.getElementById('logoutButton');
+    const resetButton = document.getElementById('resetProfileButton');
     const uploadButton = document.getElementById('uploadButton');
     const cvFile = document.getElementById('cvFile');
     const uploadStatus = document.getElementById('uploadStatus');
@@ -9,61 +10,87 @@ document.addEventListener('DOMContentLoaded', () => {
     const matchedJobList = document.getElementById('matched-job-list');
     const savedJobList = document.getElementById('saved-job-list');
     const jobCardTemplate = document.getElementById('job-card-template');
+    const profileForm = document.getElementById('profile-form');
+    const saveProfileButton = document.getElementById('saveProfileButton');
 
     // Tab switching logic
+    const manageProfileTab = document.getElementById('manage-profile-tab');
     const matchedJobsTab = document.getElementById('matched-jobs-tab');
     const savedJobsTab = document.getElementById('saved-jobs-tab');
     const careerCoachTab = document.getElementById('career-coach-tab');
+    const manageProfileContent = document.getElementById('manage-profile');
     const matchedJobsContent = document.getElementById('matched-jobs');
     const savedJobsContent = document.getElementById('saved-jobs');
     const careerCoachContent = document.getElementById('career-coach');
 
     function switchTab(tabName) {
-        if (tabName === 'matched') {
+        manageProfileTab.classList.remove('border-blue-600', 'text-blue-600');
+        manageProfileContent.classList.add('hidden');
+        matchedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
+        matchedJobsContent.classList.add('hidden');
+        savedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
+        savedJobsContent.classList.add('hidden');
+        careerCoachTab.classList.remove('border-blue-600', 'text-blue-600');
+        careerCoachContent.classList.add('hidden');
+
+        if (tabName === 'manage') {
+            manageProfileTab.classList.add('border-blue-600', 'text-blue-600');
+            manageProfileContent.classList.remove('hidden');
+            fetchProfile();
+        } else if (tabName === 'matched') {
             matchedJobsTab.classList.add('border-blue-600', 'text-blue-600');
-            matchedJobsTab.classList.remove('hover:text-gray-600', 'hover:border-gray-300');
             matchedJobsContent.classList.remove('hidden');
-            
-            savedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
-            savedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
-            savedJobsContent.classList.add('hidden');
-            careerCoachContent.classList.add('hidden');
             fetchMatchedJobs();
         } else if (tabName === 'saved') {
             savedJobsTab.classList.add('border-blue-600', 'text-blue-600');
-            savedJobsTab.classList.remove('hover:text-gray-600', 'hover:border-gray-300');
             savedJobsContent.classList.remove('hidden');
-
-            matchedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
-            matchedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
-            matchedJobsContent.classList.add('hidden');
-            careerCoachContent.classList.add('hidden');
             fetchSavedJobs();
         } else if (tabName === 'coach') {
             careerCoachTab.classList.add('border-blue-600', 'text-blue-600');
-            careerCoachTab.classList.remove('hover:text-gray-600', 'hover:border-gray-300');
             careerCoachContent.classList.remove('hidden');
-
-            matchedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
-            matchedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
-            matchedJobsContent.classList.add('hidden');
-
-            savedJobsTab.classList.remove('border-blue-600', 'text-blue-600');
-            savedJobsTab.classList.add('hover:text-gray-600', 'hover:border-gray-300');
-            savedJobsContent.classList.add('hidden');
         }
     }
 
+    manageProfileTab.addEventListener('click', () => switchTab('manage'));
     matchedJobsTab.addEventListener('click', () => switchTab('matched'));
     savedJobsTab.addEventListener('click', () => switchTab('saved'));
     careerCoachTab.addEventListener('click', () => switchTab('coach'));
 
     // Initial tab load
-    switchTab('matched');
+    switchTab('manage');
 
     logoutButton.addEventListener('click', () => {
         document.cookie = "access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
         window.location.href = '/login';
+    });
+
+    resetButton.addEventListener('click', async () => {
+        const token = await getAuthToken();
+        if (!token) {
+            alert('Authentication token not found. Please log in.');
+            return;
+        }
+
+        if (confirm('Are you sure you want to reset your profile? This action cannot be undone.')) {
+            try {
+                const response = await fetch('/api/me/profile', {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.ok) {
+                    alert('Profile reset successfully!');
+                    window.location.reload();
+                } else {
+                    const error = await response.json();
+                    alert(`Failed to reset profile: ${error.detail || response.statusText}`);
+                }
+            } catch (error) {
+                alert(`An error occurred: ${error.message}`);
+            }
+        }
     });
 
     uploadButton.addEventListener('click', async () => {
@@ -100,6 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const result = await response.json();
                 uploadStatus.textContent = `CV uploaded and profile updated successfully!`;
                 uploadStatus.className = 'mt-2 text-sm text-green-600';
+                fetchProfile(); // Refresh the profile form
             } else {
                 const error = await response.json();
                 uploadStatus.textContent = `Upload failed: ${error.detail || response.statusText}`;
@@ -164,6 +192,255 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         return "";
     }
+
+    async function fetchProfile() {
+        const token = await getAuthToken();
+        if (!token) {
+            profileForm.innerHTML = '<p class="text-red-500">Please log in to view your profile.</p>';
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/me/profile', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                const profile = await response.json();
+                const transformedProfile = { ...profile };
+                if (profile.clusters) {
+                    if (profile.clusters.work_experience?.data) {
+                        transformedProfile.work_experience = profile.clusters.work_experience.data;
+                    }
+                    if (profile.clusters.education?.data) {
+                        transformedProfile.education = profile.clusters.education.data;
+                    }
+                    delete transformedProfile.clusters;
+                } else {
+                    // Ensure defaults if missing (flat case)
+                    transformedProfile.work_experience = profile.work_experience || [];
+                    transformedProfile.education = profile.education || [];
+                }
+                transformedProfile.contact_info = profile.contact_info || {};
+                console.log('Fetched Profile JSON:', JSON.stringify(profile, null, 2));
+                console.log('Transformed Profile JSON:', JSON.stringify(transformedProfile, null, 2));
+                renderProfileForm(transformedProfile);
+            } else {
+                profileForm.innerHTML = '<p class="text-red-500">Failed to load profile. Please upload your CV.</p>';
+            }
+        } catch (error) {
+            profileForm.innerHTML = `<p class="text-red-500">An error occurred: ${error.message}</p>`;
+        }
+    }
+
+    function renderProfileForm(profile) {
+    profileForm.innerHTML = ''; // Clear the form
+
+    const profileSchema = {
+        name: { type: 'string' },
+        contact_info: { 
+            type: 'object', 
+            schema: { email: { type: 'string' }, phone: { type: 'string' }, linkedin: { type: 'string' } }
+        },
+        experience_summary: { type: 'string' },
+        enhanced_skills: { type: 'array-of-string' },
+        work_experience: { 
+            type: 'array-of-object', 
+            schema: { title: { type: 'string' }, company: { type: 'string' }, dates: { type: 'string' }, description: { type: 'string' } }
+        },
+        education: { 
+            type: 'array-of-object', 
+            schema: { institution: { type: 'string' }, degree: { type: 'string' }, year: { type: 'string' } }
+        },
+        suggested_keywords: { type: 'array-of-string' },
+        salary_range: { type: 'string' }
+    };
+
+    const createField = (key, fieldSchema, value, prefix = '') => {
+        const fieldId = prefix ? `${prefix}.${key}` : key;
+        const label = `<label for="${fieldId}" class="block text-sm font-medium text-gray-700 capitalize">${key.replace(/_/g, ' ')}</label>`;
+
+        switch (fieldSchema.type) {
+            case 'string':
+                return `
+                    <div class="mb-4">
+                        ${label}
+                        <input type="text" name="${fieldId}" id="${fieldId}" value="${value || ''}" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                    </div>
+                `;
+            case 'array-of-string':
+                return `
+                    <div class="mb-4">
+                        ${label}
+                        <textarea name="${fieldId}" id="${fieldId}" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">${(value || []).join(', ')}</textarea>
+                    </div>
+                `;
+            case 'object': {
+                const currentData = value || {};
+                const fieldsHtml = Object.keys(fieldSchema.schema).map(nestedKey => 
+                    createField(nestedKey, fieldSchema.schema[nestedKey], currentData[nestedKey], fieldId)
+                ).join('');
+                return `
+                    <fieldset class="mb-4 p-2 border border-gray-200 rounded-lg">
+                        <legend class="text-lg font-semibold text-gray-800 capitalize">${key.replace(/_/g, ' ')}</legend>
+                        ${fieldsHtml}
+                    </fieldset>
+                `;
+            }
+            case 'array-of-object': {
+                const items = value || [];
+                const itemsHtml = items.map((item, index) => `
+                    <div class="p-3 mb-2 border border-gray-300 rounded-md relative item-card">
+                        <button type="button" class="absolute top-2 right-2 text-red-500 remove-item-btn">&times;</button>
+                        ${Object.keys(fieldSchema.schema).map(itemKey => createField(itemKey, fieldSchema.schema[itemKey], item[itemKey], `${fieldId}[${index}]`)).join('')}
+                    </div>
+                `).join('');
+                return `
+                    <fieldset class="mb-4 p-2 border border-gray-200 rounded-lg" data-section="${key}">
+                        <legend class="text-lg font-semibold text-gray-800 capitalize">${key.replace(/_/g, ' ')}</legend>
+                        <div class="items-container">${itemsHtml}</div>
+                        <button type="button" class="mt-2 text-blue-500 add-item-btn" data-type="${key}">+ Add ${key.replace(/_/g, ' ')}</button>
+                    </fieldset>
+                `;
+            }
+            default:
+                return '';
+        }
+    };
+    
+    profileForm.innerHTML = Object.keys(profileSchema).map(key => {
+        // Use the schema to drive the form creation
+        return createField(key, profileSchema[key], profile[key]);
+    }).join('');
+}
+
+profileForm.addEventListener('click', (e) => {
+    if (e.target.classList.contains('add-item-btn')) {
+        const type = e.target.dataset.type;
+        const container = e.target.closest('fieldset').querySelector('.items-container');
+        const newIndex = container.querySelectorAll('.item-card').length;
+
+        const templates = {
+            work_experience: { title: '', company: '', dates: '', description: '' },
+            education: { institution: '', degree: '', year: '' }
+        };
+        const itemTemplate = templates[type];
+        if (!itemTemplate) return;
+
+        const newCard = document.createElement('div');
+        newCard.className = 'p-3 mb-2 border border-gray-300 rounded-md relative item-card';
+        
+        const fieldsHtml = Object.keys(itemTemplate).map(key => {
+            const fieldId = `${type}[${newIndex}][${key}]`;
+            const label = `<label for="${fieldId}" class="block text-sm font-medium text-gray-700 capitalize">${key.replace(/_/g, ' ')}</label>`;
+            return `
+                <div class="mb-4">
+                    ${label}
+                    <input type="text" name="${fieldId}" id="${fieldId}" value="" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                </div>
+            `;
+        }).join('');
+
+        newCard.innerHTML = `
+            <button type="button" class="absolute top-2 right-2 text-red-500 remove-item-btn">&times;</button>
+            ${fieldsHtml}
+        `;
+        container.appendChild(newCard);
+    }
+
+    if (e.target.classList.contains('remove-item-btn')) {
+        e.target.closest('.item-card').remove();
+    }
+});
+
+saveProfileButton.addEventListener('click', async () => {
+    const token = await getAuthToken();
+    if (!token) {
+        alert('Authentication token not found. Please log in.');
+        return;
+    }
+
+    const formData = new FormData(profileForm);
+    const updatedProfile = {};
+
+    const setNestedValue = (obj, path, value) => {
+        const keys = path.replace(/\[(\d+)\]/g, '.$1').split('.');
+        let current = obj;
+        for (let i = 0; i < keys.length - 1; i++) {
+            const key = keys[i];
+            const nextKey = keys[i + 1];
+            const isNextKeyNumeric = !isNaN(parseInt(nextKey, 10));
+            
+            if (!current[key]) {
+                current[key] = isNextKeyNumeric ? [] : {};
+            }
+            current = current[key];
+        }
+        const lastKey = keys[keys.length - 1];
+        const index = parseInt(lastKey, 10);
+        if (Array.isArray(current) && !isNaN(index)) {
+             current[index] = value;
+        } else {
+            current[lastKey] = value;
+        }
+    };
+
+    const profileData = {};
+    for (const [key, value] of formData.entries()) {
+        const path = key.split('.');
+        let current = profileData;
+        for(let i = 0; i < path.length - 1; i++) {
+            const segment = path[i];
+            const arrayMatch = segment.match(/(\w+)\[(\d+)\]/);
+            if(arrayMatch) {
+                const arrayKey = arrayMatch[1];
+                const index = arrayMatch[2];
+                if(!current[arrayKey]) current[arrayKey] = [];
+                if(!current[arrayKey][index]) current[arrayKey][index] = {};
+                current = current[arrayKey][index];
+            } else {
+                if(!current[segment]) current[segment] = {};
+                current = current[segment];
+            }
+        }
+        const finalKey = path[path.length - 1];
+        if (finalKey.includes('skills') || finalKey.includes('suggested_keywords')) {
+             current[finalKey] = value.split(',').map(s => s.trim());
+        } else {
+            current[finalKey] = value;
+        }
+    }
+
+    // Clean up null/empty items from arrays
+    ['work_experience', 'education'].forEach(key => {
+        if(profileData[key]) {
+            profileData[key] = profileData[key].filter(item => item && Object.values(item).some(v => v));
+        }
+    });
+
+    try {
+        const response = await fetch('/api/me/profile', {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(profileData)
+        });
+
+        if (response.ok) {
+            alert('Profile updated successfully!');
+            fetchProfile(); // Refresh the profile form
+        } else {
+            const error = await response.json();
+            alert(`Failed to update profile: ${error.detail || response.statusText}`);
+        }
+    } catch (error) {
+        alert(`An error occurred: ${error.message}`);
+    }
+});
 
     async function fetchMatchedJobs() {
         matchedJobList.innerHTML = '<p class="text-gray-500">Loading matched jobs...</p>';
@@ -387,42 +664,6 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(`An error occurred while submitting feedback: ${error.message}`);
         }
     }
-
-    // Initial fetch of matched jobs when the dashboard loads
-    fetchMatchedJobs();
-
-    // --- Function to check for an existing profile on page load ---
-    async function checkForExistingProfile() {
-        const token = await getAuthToken();
-        if (!token) return; // No token, no profile
-
-        try {
-            const response = await fetch('/api/me/profile', {
-                method: 'GET',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const profile = await response.json();
-                // Profile exists, update the UI
-                uploadStatus.textContent = `Profile for ${profile.name} is loaded. Upload a new CV to update.`;
-                uploadButton.disabled = false;
-                uploadButton.textContent = 'Update Profile';
-                uploadButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
-                uploadButton.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                cvFile.disabled = false;
-
-            } else if (response.status === 404) {
-                // Profile does not exist, do nothing. The user needs to upload.
-                console.log('No profile found for user. CV upload is required.');
-            }
-        } catch (error) {
-            console.error('Error checking for profile:', error);
-        }
-    }
-
-    // Call the new function on page load
-    checkForExistingProfile();
 
     // --- Career Coach WebSocket Logic ---
     let ws;

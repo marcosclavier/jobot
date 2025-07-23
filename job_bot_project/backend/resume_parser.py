@@ -77,12 +77,59 @@ def parse_resume(file_path):
         return None
 
 def parse_resume_with_pymupdf(file_path):
-      doc = fitz.open(file_path)
-      text = ""
-      for page in doc:
-          text += page.get_text()
-      # Simple NLP to extract clusters (improve with regex or Gemini)
-      education_match = re.search(r'Education\s*(.*?)\s*Experience', text, re.DOTALL | re.IGNORECASE)
-      education = {"institution": "Extracted", "degree": "Extracted"} if education_match else {}
-      # Similar for other clusters
-      return {"raw_text": text, "education": education, "work_experience": []}  # Return dict for agents
+    doc = fitz.open(file_path)
+    text = ""
+    for page in doc:
+        text += page.get_text("text")  # Use 'text' mode for better structure
+    doc.close()
+    # Improved section extraction with better regex for clusters
+    # Contact Info (look for patterns)
+    contact = {}
+    phone_match = re.search(r'(\+?\d{1,3}?\s?(\(?\d{3}\)?\s?-?\d{3}\s?-?\d{4}))', text)
+    if phone_match:
+        contact['phone'] = phone_match.group(1)
+    email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', text)
+    if email_match:
+        contact['email'] = email_match.group(1)
+    linkedin_match = re.search(r'(linkedin\.com/in/[a-zA-Z0-9_-]+)', text)
+    if linkedin_match:
+        contact['linkedin'] = f"https://{linkedin_match.group(1)}"
+    location_match = re.search(r'([A-Za-z]+,\s*[A-Z]{2})', text)  # Simple city, state
+    if location_match:
+        contact['location'] = location_match.group(1)
+    
+    # Education section
+    education = []
+    edu_matches = re.findall(r'(?i)(?:education|academic background)\s*([\s\S]*?)(?:experience|skills|summary|$)', text)
+    if edu_matches:
+        for match in edu_matches:
+            lines = match.split('\n')
+            for line in lines:
+                if line.strip():
+                    # Simple parse: assume "Degree - Institution - Dates"
+                    parts = re.split(r'\s*-\s*|\s*,\s*', line)
+                    if len(parts) >= 3:
+                        education.append({"degree": parts[0].strip(), "institution": parts[1].strip(), "dates": parts[2].strip()})
+
+    # Work Experience section
+    work_experience = []
+    work_matches = re.findall(r'(?i)(?:experience|work history|professional experience)\s*([\s\S]*?)(?:education|skills|summary|$)', text)
+    if work_matches:
+        for match in work_matches:
+            entries = re.split(r'\n\s*\n', match)  # Split by blank lines
+            for entry in entries:
+                lines = entry.split('\n')
+                if len(lines) >= 4:  # Assume title, company, dates, description
+                    work_experience.append({
+                        "title": lines[0].strip(),
+                        "company": lines[1].strip(),
+                        "dates": lines[2].strip(),
+                        "description": ' '.join(lines[3:]).strip()
+                    })
+
+    return {
+        "raw_text": text,
+        "contact_info": contact,
+        "education": education,
+        "work_experience": work_experience
+    }

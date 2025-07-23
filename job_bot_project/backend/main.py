@@ -175,6 +175,22 @@ class MFADisable(BaseModel):
 class JobFeedback(BaseModel):
     feedback: bool # True for thumbs up, False for thumbs down
 
+class ContactInfo(BaseModel):
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    linkedin: Optional[str] = None
+    location: Optional[str] = None
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    contact_info: Optional[ContactInfo] = None
+    experience_summary: Optional[str] = None
+    enhanced_skills: Optional[List[str]] = None
+    work_experience: Optional[List[dict]] = None
+    education: Optional[List[dict]] = None
+    suggested_keywords: Optional[List[str]] = None
+    salary_range: Optional[str] = None
+
 # --- Helper Functions ---
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -430,8 +446,8 @@ async def authorize_form(request: Request, client_id: str, redirect_uri: str, re
             <p>Log in to authorize the Chrome Extension</p>
             <form action="/api/oauth2/login" method="post">
                 <input type="hidden" name="client_id" value="{client_id}">
-                <input type="hidden" name="redirect_uri" value="{redirect_uri}">
-                <input type="email" name="username" placeholder="Email" required>
+                <input type="redirect_uri" name="redirect_uri" value="{redirect_uri}">
+                <input type="username" placeholder="Email" required>
                 <input type="password" name="password" placeholder="Password" required>
                 <button type="submit">Log In & Authorize</button>
             </form>
@@ -443,7 +459,7 @@ async def authorize_form(request: Request, client_id: str, redirect_uri: str, re
 @app.post("/api/oauth2/login")
 async def authorize_login(client_id: str = Form(...), redirect_uri: str = Form(...), username: str = Form(...), password: str = Form(...)):
     if client_id not in AUTHORIZED_CLIENT_IDS:
-        raise HTTPException(status_code=400, detail="Invalid or unauthorized client_id")
+        raise HTTPException(status_code=400, detail="Invalid or invalid client_id")
 
     user = await users_collection.find_one({"email": username})
     if not user or not verify_password(password, user.get("hashed_password")):
@@ -519,6 +535,42 @@ async def mfa_disable(request: Request, mfa_data: MFADisable):
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 ALLOWED_FILE_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
 
+@app.put("/api/me/profile")
+@limiter.limit("60/minute")
+async def update_my_profile(request: Request, profile_update: ProfileUpdate, current_user: dict = Depends(get_current_user)):
+    """
+    Updates the profile for the currently authenticated user.
+    """
+    update_data = profile_update.dict(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No update data provided.")
+
+    existing_profile = await profiles_collection.find_one({"user_id": current_user["_id"]}) or {}
+
+    # Deep merge contact_info
+    if 'contact_info' in update_data:
+        existing_contact = existing_profile.get('contact_info', {})
+        if isinstance(existing_contact, dict) and isinstance(update_data['contact_info'], dict):
+            existing_contact.update(update_data['contact_info'])
+            update_data['contact_info'] = existing_contact
+
+    # Merge top-level fields
+    final_profile = existing_profile.copy()
+    final_profile.update(update_data)
+
+    # Ensure defaults
+    final_profile.setdefault('contact_info', {})
+    final_profile.setdefault('work_experience', [])
+    final_profile.setdefault('education', [])
+
+    await profiles_collection.update_one(
+        {"user_id": current_user["_id"]},
+        {"$set": final_profile},
+        upsert=True
+    )
+
+    return {"message": "Profile updated successfully."}
+
 @app.get("/api/me/profile")
 @limiter.limit("60/minute")
 async def get_my_profile(request: Request, current_user: dict = Depends(get_current_user)):
@@ -527,6 +579,15 @@ async def get_my_profile(request: Request, current_user: dict = Depends(get_curr
     """
     profile = await profiles_collection.find_one({"user_id": current_user["_id"]})
     if profile:
+        profile.setdefault('contact_info', {})
+        profile.setdefault('work_experience', [])
+        profile.setdefault('education', [])
+        # Flatten clusters if present
+        if 'clusters' in profile:
+            for section in ['work_experience', 'education']:
+                if section in profile['clusters'] and 'data' in profile['clusters'][section]:
+                    profile[section] = profile['clusters'][section]['data']
+            del profile['clusters']
         # Convert ObjectId fields to string for JSON serialization
         if "_id" in profile:
             profile["_id"] = str(profile["_id"])
@@ -534,6 +595,17 @@ async def get_my_profile(request: Request, current_user: dict = Depends(get_curr
             profile["user_id"] = str(profile["user_id"])
         return profile
     raise HTTPException(status_code=404, detail="Profile not found. Please upload a CV.")
+
+@app.delete("/api/me/profile")
+@limiter.limit("5/minute")
+async def delete_my_profile(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Deletes the profile for the currently authenticated user.
+    """
+    result = await profiles_collection.delete_one({"user_id": current_user["_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    return {"message": "Profile reset successfully."}
 
 async def get_optional_current_user(request: Request):
     try:
@@ -563,6 +635,15 @@ async def cv_upload(request: Request, file: UploadFile = File(...), temp_token: 
     workflow_output = await run_agent_workflow(parsed_data)
     enhanced_data = workflow_output.get('profile', {})
     questions = workflow_output.get('questions', [])
+    logging.info(f"Pre-flatten enhanced_data: {json.dumps(enhanced_data, default=str)}")
+
+    # Flatten clusters if present
+    if 'clusters' in enhanced_data:
+        for section in ['work_experience', 'education']:
+            if section in enhanced_data['clusters'] and 'data' in enhanced_data['clusters'][section]:
+                enhanced_data[section] = enhanced_data['clusters'][section]['data']
+        del enhanced_data['clusters']
+    logging.info(f"Post-flatten enhanced_data: {json.dumps(enhanced_data, default=str)}")
 
     if temp_token:
         session = await temp_sessions_collection.find_one({"token": temp_token})

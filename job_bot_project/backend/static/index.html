@@ -42,24 +42,12 @@
             Logout
         </button>
         
-        <div class="mb-8 p-6 border border-gray-200 rounded-lg bg-gray-50">
-            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Upload Your CV</h2>
-            <input type="file" id="cvFile" accept=".pdf,.docx" class="block w-full text-sm text-gray-500
-                file:mr-4 file:py-2 file:px-4
-                file:rounded-full file:border-0
-                file:text-sm file:font-semibold
-                file:bg-blue-50 file:text-blue-700
-                hover:file:bg-blue-100
-            ">
-            <button id="uploadButton" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-                Upload
-            </button>
-            <p id="uploadStatus" class="mt-2 text-sm text-gray-600"></p>
-        </div>
-
         <!-- Navigation Tabs -->
         <div class="mb-4 border-b border-gray-200">
             <ul class="flex flex-wrap -mb-px text-sm font-medium text-center" id="myTab" data-tabs-toggle="#myTabContent" role="tablist">
+                <li class="mr-2" role="presentation">
+                    <button class="inline-block p-4 border-b-2 rounded-t-lg" id="manage-profile-tab" data-tabs-target="#manage-profile" type="button" role="tab" aria-controls="manage-profile" aria-selected="false">Manage Profile</button>
+                </li>
                 <li class="mr-2" role="presentation">
                     <button class="inline-block p-4 border-b-2 rounded-t-lg" id="career-coach-tab" data-tabs-target="#career-coach" type="button" role="tab" aria-controls="career-coach" aria-selected="false">Career Coach</button>
                 </li>
@@ -74,6 +62,42 @@
 
         <!-- Tab Content -->
         <div id="myTabContent">
+            <!-- Manage Profile Tab -->
+            <div class="hidden p-4 rounded-lg bg-gray-50" id="manage-profile" role="tabpanel" aria-labelledby="manage-profile-tab">
+                <div class="mb-8 p-6 border border-gray-200 rounded-lg bg-gray-50">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-4">Upload Your CV</h2>
+                    <input type="file" id="cvFile" accept=".pdf,.docx" class="block w-full text-sm text-gray-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-blue-50 file:text-blue-700
+                        hover:file:bg-blue-100
+                    ">
+                    <button id="uploadButton" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                        Upload
+                    </button>
+                    <p id="uploadStatus" class="mt-2 text-sm text-gray-600"></p>
+                </div>
+
+                <div class="mb-8 p-6 border border-gray-200 rounded-lg bg-gray-50">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-4">Edit Your Profile</h2>
+                    <form id="profile-form">
+                        <!-- Profile fields will be dynamically added here -->
+                    </form>
+                    <button id="saveProfileButton" class="mt-4 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                        Save Changes
+                    </button>
+                </div>
+
+                <div class="mb-8 p-6 border border-gray-200 rounded-lg bg-gray-50">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-4">Reset Your Profile</h2>
+                    <p class="text-gray-600">This will permanently delete your profile. This action cannot be undone.</p>
+                    <button id="resetProfileButton" class="mt-4 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+                        Reset Profile
+                    </button>
+                </div>
+            </div>
+
             <!-- Career Coach Tab -->
             <div class="hidden p-4 rounded-lg bg-gray-50" id="career-coach" role="tabpanel" aria-labelledby="career-coach-tab">
                 <div id="chat-container" style="border: 1px solid #ccc; padding: 10px; border-radius: 10px; background: #f9f9f9;">
